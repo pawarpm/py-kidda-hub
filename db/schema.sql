@@ -176,9 +176,35 @@ CREATE TABLE IF NOT EXISTS group_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('Feature Update', 'App Change', 'Announcement', 'Maintenance', 'General')),
+  priority TEXT NOT NULL CHECK (priority IN ('Low', 'Medium', 'High')) DEFAULT 'Medium',
+  target TEXT NOT NULL CHECK (target IN ('All Users', 'Students', 'Admins', 'Specific User')) DEFAULT 'All Users',
+  specific_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  publish_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ,
+  status TEXT NOT NULL CHECK (status IN ('Draft', 'Published')) DEFAULT 'Draft',
+  created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS notification_user_status (
+  notification_id UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  read_at TIMESTAMPTZ,
+  cleared_at TIMESTAMPTZ,
+  PRIMARY KEY (notification_id, user_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_questions_topic ON questions(topic);
 CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty);
 CREATE INDEX IF NOT EXISTS idx_submissions_user_created ON submissions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_friends_user ON friends(user_id);
 CREATE INDEX IF NOT EXISTS idx_private_messages_chat ON private_messages(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_target_status ON notifications(status, target, publish_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_user_status_user ON notification_user_status(user_id);

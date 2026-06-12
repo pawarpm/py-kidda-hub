@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Award, BarChart3, Code2, Info, LayoutDashboard, Loader2, Lock, LogOut, MessageSquareText, Search, Settings, Shield, UserRound, Users, X, Trophy, Timer } from 'lucide-react';
+import { Award, BarChart3, Bell, Code2, Info, LayoutDashboard, Loader2, Lock, LogOut, MessageSquareText, Search, Settings, Shield, UserRound, Users, X, Trophy, Timer } from 'lucide-react';
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, clearSession, getToken, getUser } from '../lib/api';
+import { NotificationItem, priorityClass } from '../pages/Notifications';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -43,6 +44,10 @@ export default function AppShell() {
   const [searchResults, setSearchResults] = useState<StudentSearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState('');
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [toast, setToast] = useState<NotificationItem | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -135,6 +140,36 @@ export default function AppShell() {
       window.clearTimeout(timer);
     };
   }, [searchText, user?.id, user?.role]);
+
+  async function loadNotifications(showToast = false) {
+    if (!user) return;
+    try {
+      const result = await api<{ notifications: NotificationItem[]; unreadCount: number }>('/notifications');
+      if (showToast && result.unreadCount > unreadCount) {
+        const firstUnread = result.notifications.find((item) => !item.isRead);
+        if (firstUnread) {
+          setToast(firstUnread);
+          window.setTimeout(() => setToast(null), 3500);
+        }
+      }
+      setNotifications(result.notifications.slice(0, 5));
+      setUnreadCount(result.unreadCount);
+    } catch {
+      // Keep navigation usable if notification loading fails.
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return;
+    loadNotifications(false);
+    const interval = window.setInterval(() => loadNotifications(true), 45_000);
+    return () => window.clearInterval(interval);
+  }, [user?.id]);
+
+  async function markNotificationRead(id: string) {
+    await api(`/notifications/${id}/read`, { method: 'POST' });
+    loadNotifications(false);
+  }
 
   if (!user) return <Navigate to="/auth" replace />;
   if (user.role !== 'admin' && profileCheck.loading) {
@@ -303,6 +338,33 @@ export default function AppShell() {
             </div>
           )}
           <div className="flex shrink-0 items-center gap-2 self-end lg:self-auto">
+            <div className="relative">
+              <button className="btn btn-soft relative" type="button" onClick={() => setShowNotifications(!showNotifications)} aria-label="Notifications">
+                <Bell size={16} />
+                {unreadCount > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-coral px-1.5 py-0.5 text-[10px] font-bold text-white">{unreadCount}</span>}
+              </button>
+              {showNotifications && (
+                <div className="absolute right-0 top-full z-30 mt-2 w-[min(360px,calc(100vw-2rem))] rounded-lg border border-slate-200 bg-white p-2 shadow-panel">
+                  <div className="flex items-center justify-between px-2 py-2">
+                    <div className="font-bold">Notifications</div>
+                    <button className="text-xs font-bold text-brand" onClick={() => { setShowNotifications(false); navigate('/notifications'); }}>View All</button>
+                  </div>
+                  <div className="max-h-96 space-y-2 overflow-y-auto">
+                    {notifications.length === 0 && <div className="p-3 text-sm text-slate-500">No notifications</div>}
+                    {notifications.map((item) => (
+                      <button key={item.id} className={`w-full rounded-lg border p-3 text-left ${item.isRead ? 'border-slate-200' : 'border-blue-200 bg-blue-50'}`} onClick={() => markNotificationRead(item.id)}>
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-bold">{item.title}</div>
+                          <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-bold ${priorityClass(item.priority)}`}>{item.priority}</span>
+                        </div>
+                        <div className="mt-1 max-h-9 overflow-hidden text-xs text-slate-600">{item.message}</div>
+                        <div className="mt-1 text-[11px] text-slate-400">{item.type}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             {user.role !== 'admin' && (
               <button className="btn btn-soft" type="button" onClick={() => navigate('/profile/edit')}>
                 <Settings size={16} />
@@ -326,6 +388,17 @@ export default function AppShell() {
           <Outlet />
         </div>
       </main>
+      {toast && (
+        <div className="fixed bottom-5 right-5 z-40 w-[min(360px,calc(100vw-2rem))] rounded-lg border border-blue-200 bg-white p-4 shadow-panel">
+          <div className="flex items-start gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-full bg-blue-50 text-brand"><Bell size={17} /></div>
+            <div>
+              <div className="text-sm font-bold">{toast.title}</div>
+              <div className="mt-1 text-sm text-slate-600">{toast.message}</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

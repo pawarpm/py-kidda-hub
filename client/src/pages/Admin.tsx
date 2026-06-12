@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, Plus, RefreshCcw, Trash2 } from 'lucide-react';
+import { Bell, Download, Edit2, Plus, RefreshCcw, Send, Trash2 } from 'lucide-react';
 import { api, getUser } from '../lib/api';
 
 type StudentProgress = {
@@ -17,10 +17,41 @@ type StudentProgress = {
   lastSubmissionAt: string | null;
 };
 
+type AdminNotification = {
+  id: string;
+  title: string;
+  message: string;
+  type: string;
+  priority: string;
+  target: string;
+  specific_user_id?: string | null;
+  publish_at?: string;
+  expires_at?: string | null;
+  status: 'Draft' | 'Published';
+  createdByName?: string;
+  readCount?: number;
+};
+
+const emptyNotification = {
+  title: '',
+  message: '',
+  type: 'General',
+  priority: 'Medium',
+  target: 'All Users',
+  specificUserId: '',
+  publishAt: new Date().toISOString().slice(0, 16),
+  expiresAt: '',
+  status: 'Draft'
+};
+
 export default function Admin() {
   const user = getUser();
   const [questions, setQuestions] = useState<any[]>([]);
   const [report, setReport] = useState<StudentProgress[]>([]);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [editingNotificationId, setEditingNotificationId] = useState('');
+  const [notificationError, setNotificationError] = useState('');
+  const [notificationForm, setNotificationForm] = useState(emptyNotification);
   const [form, setForm] = useState({
     title: '',
     category: 'Basic Python',
@@ -41,9 +72,14 @@ export default function Admin() {
     api<StudentProgress[]>('/admin/export').then(setReport).catch(() => {});
   }
 
+  function loadNotifications() {
+    api<AdminNotification[]>('/admin/notifications').then(setNotifications).catch(() => {});
+  }
+
   useEffect(() => {
     loadQuestions();
     loadProgress();
+    loadNotifications();
   }, []);
 
   if (user?.role !== 'admin') return <div className="panel p-6">Admin access is required.</div>;
@@ -53,6 +89,42 @@ export default function Admin() {
     await api('/admin/questions', { method: 'POST', body: JSON.stringify(form) });
     setForm({ ...form, title: '', statement: '', sampleInput: '', sampleOutput: '' });
     loadQuestions();
+  }
+
+  async function saveNotification(event: React.FormEvent) {
+    event.preventDefault();
+    setNotificationError('');
+    try {
+      const payload = {
+        ...notificationForm,
+        specificUserId: notificationForm.target === 'Specific User' ? notificationForm.specificUserId : ''
+      };
+      if (editingNotificationId) {
+        await api(`/admin/notifications/${editingNotificationId}`, { method: 'PUT', body: JSON.stringify(payload) });
+      } else {
+        await api('/admin/notifications', { method: 'POST', body: JSON.stringify(payload) });
+      }
+      setNotificationForm({ ...emptyNotification, publishAt: new Date().toISOString().slice(0, 16) });
+      setEditingNotificationId('');
+      loadNotifications();
+    } catch (err) {
+      setNotificationError(err instanceof Error ? err.message : 'Could not save notification.');
+    }
+  }
+
+  function editNotification(item: AdminNotification) {
+    setEditingNotificationId(item.id);
+    setNotificationForm({
+      title: item.title,
+      message: item.message,
+      type: item.type,
+      priority: item.priority,
+      target: item.target,
+      specificUserId: item.specific_user_id || '',
+      publishAt: item.publish_at ? new Date(item.publish_at).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16),
+      expiresAt: item.expires_at ? new Date(item.expires_at).toISOString().slice(0, 16) : '',
+      status: item.status
+    });
   }
 
   function downloadReport() {
@@ -122,6 +194,69 @@ export default function Admin() {
             </div>
           ))}
           {!students.length && <div className="p-4 text-sm text-slate-500">No student activity yet. Student accounts will appear here after sign-up.</div>}
+        </div>
+      </section>
+
+      <section className="panel overflow-hidden">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <div className="flex items-center gap-2 font-bold"><Bell size={18} /> Notifications</div>
+          <div className="text-sm text-slate-500">Create announcements, app updates, maintenance alerts, and custom messages.</div>
+        </div>
+        <form onSubmit={saveNotification} className="grid gap-3 p-5 lg:grid-cols-2">
+          <input className="input lg:col-span-2" placeholder="Notification title" value={notificationForm.title} onChange={(event) => setNotificationForm({ ...notificationForm, title: event.target.value })} required />
+          <textarea className="input min-h-24 lg:col-span-2" placeholder="Notification message" value={notificationForm.message} onChange={(event) => setNotificationForm({ ...notificationForm, message: event.target.value })} required />
+          <select className="input" value={notificationForm.type} onChange={(event) => setNotificationForm({ ...notificationForm, type: event.target.value })}>
+            <option>Feature Update</option><option>App Change</option><option>Announcement</option><option>Maintenance</option><option>General</option>
+          </select>
+          <select className="input" value={notificationForm.priority} onChange={(event) => setNotificationForm({ ...notificationForm, priority: event.target.value })}>
+            <option>Low</option><option>Medium</option><option>High</option>
+          </select>
+          <select className="input" value={notificationForm.target} onChange={(event) => setNotificationForm({ ...notificationForm, target: event.target.value })}>
+            <option>All Users</option><option>Students</option><option>Admins</option><option>Specific User</option>
+          </select>
+          {notificationForm.target === 'Specific User' ? (
+            <select className="input" value={notificationForm.specificUserId} onChange={(event) => setNotificationForm({ ...notificationForm, specificUserId: event.target.value })} required>
+              <option value="">Select user</option>
+              {report.map((row) => <option key={row.id} value={row.id}>{row.name} ({row.email})</option>)}
+            </select>
+          ) : (
+            <div className="input bg-slate-50 text-slate-500">No specific user needed</div>
+          )}
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold">Publish date/time</span>
+            <input className="input" type="datetime-local" value={notificationForm.publishAt} onChange={(event) => setNotificationForm({ ...notificationForm, publishAt: event.target.value })} required />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold">Expiry date/time</span>
+            <input className="input" type="datetime-local" value={notificationForm.expiresAt} onChange={(event) => setNotificationForm({ ...notificationForm, expiresAt: event.target.value })} />
+          </label>
+          <select className="input" value={notificationForm.status} onChange={(event) => setNotificationForm({ ...notificationForm, status: event.target.value as 'Draft' | 'Published' })}>
+            <option>Draft</option><option>Published</option>
+          </select>
+          <div className="flex gap-2">
+            <button className="btn btn-primary flex-1"><Plus size={16} /> {editingNotificationId ? 'Save Notification' : 'Create Notification'}</button>
+            {editingNotificationId && <button className="btn btn-soft" type="button" onClick={() => { setEditingNotificationId(''); setNotificationForm({ ...emptyNotification, publishAt: new Date().toISOString().slice(0, 16) }); }}>Cancel</button>}
+          </div>
+          {notificationError && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 lg:col-span-2">{notificationError}</div>}
+        </form>
+        <div className="divide-y divide-slate-100 border-t border-slate-200">
+          {notifications.length === 0 && <div className="p-4 text-sm text-slate-500">No notifications yet.</div>}
+          {notifications.map((item) => (
+            <div key={item.id} className="grid gap-3 p-4 xl:grid-cols-[1fr_160px_140px_210px] xl:items-center">
+              <div>
+                <div className="font-semibold">{item.title}</div>
+                <div className="text-sm text-slate-600">{item.message}</div>
+                <div className="mt-1 text-xs text-slate-500">{item.type} · {item.priority} · {item.target}</div>
+              </div>
+              <div className={`rounded px-2 py-1 text-center text-xs font-bold ${item.status === 'Published' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{item.status}</div>
+              <div className="text-sm text-slate-500">{item.readCount || 0} reads</div>
+              <div className="flex flex-wrap gap-2">
+                <button className="btn btn-soft" onClick={() => editNotification(item)}><Edit2 size={15} /></button>
+                {item.status !== 'Published' && <button className="btn btn-soft" onClick={async () => { await api(`/admin/notifications/${item.id}/publish`, { method: 'PATCH' }); loadNotifications(); }}><Send size={15} /></button>}
+                <button className="btn btn-soft" onClick={async () => { await api(`/admin/notifications/${item.id}`, { method: 'DELETE' }); loadNotifications(); }}><Trash2 size={15} /></button>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 

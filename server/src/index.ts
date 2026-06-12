@@ -97,6 +97,27 @@ const memoryPrivateMessages: Array<{ id: string; chat_id: string; sender_id: str
 const memoryGroups: Array<{ id: string; name: string; picture_url?: string | null; created_by: string; created_at: Date; updated_at: Date }> = [];
 const memoryGroupMembers: Array<{ group_id: string; user_id: string; is_admin: boolean; joined_at: Date }> = [];
 const memoryGroupMessages: Array<{ id: string; group_id: string; sender_id: string; message_text: string; created_at: Date }> = [];
+const notificationTypes = ['Feature Update', 'App Change', 'Announcement', 'Maintenance', 'General'] as const;
+const notificationPriorities = ['Low', 'Medium', 'High'] as const;
+const notificationTargets = ['All Users', 'Students', 'Admins', 'Specific User'] as const;
+const notificationStatuses = ['Draft', 'Published'] as const;
+type MemoryNotification = {
+  id: string;
+  title: string;
+  message: string;
+  type: (typeof notificationTypes)[number];
+  priority: (typeof notificationPriorities)[number];
+  target: (typeof notificationTargets)[number];
+  specific_user_id?: string | null;
+  publish_at: Date;
+  expires_at?: Date | null;
+  status: (typeof notificationStatuses)[number];
+  created_by: string;
+  created_at: Date;
+  updated_at: Date;
+};
+const memoryNotificationReads: Array<{ notification_id: string; user_id: string; read_at?: Date | null; cleared_at?: Date | null }> = [];
+const memoryNotifications: MemoryNotification[] = [];
 
 function createMemoryQuestion(seed: {
   title: string;
@@ -313,6 +334,55 @@ function routeParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value || '';
 }
 
+function notificationApplies(notification: MemoryNotification, user: { id: string; role: 'student' | 'admin' }) {
+  if (notification.status !== 'Published') return false;
+  if (notification.publish_at > new Date()) return false;
+  if (notification.expires_at && notification.expires_at < new Date()) return false;
+  if (notification.target === 'All Users') return true;
+  if (notification.target === 'Students') return user.role === 'student';
+  if (notification.target === 'Admins') return user.role === 'admin';
+  return notification.specific_user_id === user.id;
+}
+
+function memoryNotificationForUser(notification: MemoryNotification, userId: string) {
+  const state = memoryNotificationReads.find((item) => item.notification_id === notification.id && item.user_id === userId);
+  return {
+    ...notification,
+    isRead: Boolean(state?.read_at),
+    isCleared: Boolean(state?.cleared_at),
+    readAt: state?.read_at || null,
+    createdByName: memoryUsers.find((user) => user.id === notification.created_by)?.name || 'Admin'
+  };
+}
+
+function notificationReadCount(notificationId: string) {
+  return memoryNotificationReads.filter((item) => item.notification_id === notificationId && item.read_at).length;
+}
+
+function seedNotifications() {
+  if (memoryNotifications.length) return;
+  const admin = memoryUsers.find((user) => user.role === 'admin') || memoryUsers[0];
+  const samples = [
+    { title: 'Welcome to Py Kidda Hub', message: 'Welcome to PY Kidda Hub(PKH). Start practicing Python and track your progress.', type: 'Announcement' as const, priority: 'High' as const },
+    { title: 'New Python Practice Tests Added', message: 'Fresh Python practice tests are now available in the question bank and mock test sections.', type: 'Feature Update' as const, priority: 'Medium' as const },
+    { title: 'Progress Tracking Feature Updated', message: 'Student dashboards now show improved progress and activity tracking.', type: 'App Change' as const, priority: 'Medium' as const }
+  ];
+  for (const sample of samples) {
+    memoryNotifications.push({
+      id: randomUUID(),
+      ...sample,
+      target: 'All Users',
+      specific_user_id: null,
+      publish_at: new Date(Date.now() - 60_000),
+      expires_at: null,
+      status: 'Published',
+      created_by: admin.id,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+  }
+}
+
 type GoogleProfile = {
   sub: string;
   email: string;
@@ -367,6 +437,18 @@ const asyncRoute =
   (req: Request, res: Response, next: NextFunction) => {
     Promise.resolve(handler(req, res, next)).catch(next);
   };
+
+const notificationSchema = z.object({
+  title: z.string().trim().min(3).max(140),
+  message: z.string().trim().min(5).max(2000),
+  type: z.enum(notificationTypes),
+  priority: z.enum(notificationPriorities),
+  target: z.enum(notificationTargets),
+  specificUserId: z.string().uuid().optional().or(z.literal('')),
+  publishAt: z.string().min(1),
+  expiresAt: z.string().optional().or(z.literal('')),
+  status: z.enum(notificationStatuses)
+});
 
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') || 'http://localhost:5173' }));
@@ -1373,6 +1455,192 @@ app.post('/api/mock-attempts/:id/submit', requireAuth, asyncRoute(async (req, re
     totalQuestions: results.rows.length,
     results: results.rows
   });
+}));
+
+app.get('/api/notifications', requireAuth, asyncRoute(async (req, res) => {
+  if (await preferMemory()) {
+    seedNotifications();
+    const rows = memoryNotifications
+      .filter((notification) => notificationApplies(notification, req.user!))
+      .map((notification) => memoryNotificationForUser(notification, req.user!.id))
+      .filter((notification) => !notification.isCleared)
+      .sort((a, b) => new Date(b.publish_at).getTime() - new Date(a.publish_at).getTime());
+    return res.json({ notifications: rows, unreadCount: rows.filter((row) => !row.isRead).length });
+  }
+  const result = await query(
+    `SELECT n.*,
+            u.name AS "createdByName",
+            ns.read_at AS "readAt",
+            ns.cleared_at AS "clearedAt",
+            ns.read_at IS NOT NULL AS "isRead"
+     FROM notifications n
+     JOIN users u ON u.id=n.created_by
+     LEFT JOIN notification_user_status ns ON ns.notification_id=n.id AND ns.user_id=$1
+     WHERE n.status='Published'
+       AND n.publish_at<=now()
+       AND (n.expires_at IS NULL OR n.expires_at>now())
+       AND (n.target='All Users' OR (n.target='Students' AND $2='student') OR (n.target='Admins' AND $2='admin') OR (n.target='Specific User' AND n.specific_user_id=$1))
+       AND ns.cleared_at IS NULL
+     ORDER BY n.publish_at DESC`,
+    [req.user!.id, req.user!.role]
+  );
+  res.json({ notifications: result.rows, unreadCount: result.rows.filter((row) => !row.isRead).length });
+}));
+
+app.post('/api/notifications/:id/read', requireAuth, asyncRoute(async (req, res) => {
+  const notificationId = routeParam(req.params.id);
+  if (await preferMemory()) {
+    const notification = memoryNotifications.find((item) => item.id === notificationId);
+    if (!notification || !notificationApplies(notification, req.user!)) return res.status(404).json({ message: 'Notification not found' });
+    let state = memoryNotificationReads.find((item) => item.notification_id === notificationId && item.user_id === req.user!.id);
+    if (!state) {
+      state = { notification_id: notificationId, user_id: req.user!.id };
+      memoryNotificationReads.push(state);
+    }
+    state.read_at = state.read_at || new Date();
+    return res.json({ ok: true });
+  }
+  await query(
+    `INSERT INTO notification_user_status (notification_id, user_id, read_at)
+     VALUES ($1,$2,now())
+     ON CONFLICT (notification_id, user_id) DO UPDATE SET read_at=coalesce(notification_user_status.read_at, now())`,
+    [notificationId, req.user!.id]
+  );
+  res.json({ ok: true });
+}));
+
+app.post('/api/notifications/:id/clear', requireAuth, asyncRoute(async (req, res) => {
+  const notificationId = routeParam(req.params.id);
+  if (await preferMemory()) {
+    const notification = memoryNotifications.find((item) => item.id === notificationId);
+    if (!notification || !notificationApplies(notification, req.user!)) return res.status(404).json({ message: 'Notification not found' });
+    let state = memoryNotificationReads.find((item) => item.notification_id === notificationId && item.user_id === req.user!.id);
+    if (!state) {
+      state = { notification_id: notificationId, user_id: req.user!.id };
+      memoryNotificationReads.push(state);
+    }
+    state.cleared_at = new Date();
+    return res.json({ ok: true });
+  }
+  await query(
+    `INSERT INTO notification_user_status (notification_id, user_id, cleared_at)
+     VALUES ($1,$2,now())
+     ON CONFLICT (notification_id, user_id) DO UPDATE SET cleared_at=now()`,
+    [notificationId, req.user!.id]
+  );
+  res.json({ ok: true });
+}));
+
+app.get('/api/admin/notifications', requireAuth, requireAdmin, asyncRoute(async (_req, res) => {
+  if (await preferMemory()) {
+    seedNotifications();
+    return res.json(
+      memoryNotifications
+        .map((notification) => ({ ...notification, readCount: notificationReadCount(notification.id), createdByName: memoryUsers.find((user) => user.id === notification.created_by)?.name || 'Admin' }))
+        .sort((a, b) => b.created_at.getTime() - a.created_at.getTime())
+    );
+  }
+  const result = await query(
+    `SELECT n.*, u.name AS "createdByName", count(ns.read_at)::int AS "readCount"
+     FROM notifications n
+     JOIN users u ON u.id=n.created_by
+     LEFT JOIN notification_user_status ns ON ns.notification_id=n.id AND ns.read_at IS NOT NULL
+     GROUP BY n.id, u.name
+     ORDER BY n.created_at DESC`
+  );
+  res.json(result.rows);
+}));
+
+app.post('/api/admin/notifications', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+  const body = notificationSchema.parse(req.body);
+  if (body.target === 'Specific User' && !body.specificUserId) throw new Error('Select a specific user.');
+  const publishAt = new Date(body.publishAt);
+  const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+  if (Number.isNaN(publishAt.getTime())) throw new Error('Publish date/time is invalid.');
+  if (expiresAt && (Number.isNaN(expiresAt.getTime()) || expiresAt <= publishAt)) throw new Error('Expiry must be after publish date/time.');
+  if (await preferMemory()) {
+    const notification: MemoryNotification = {
+      id: randomUUID(),
+      title: body.title,
+      message: body.message,
+      type: body.type,
+      priority: body.priority,
+      target: body.target,
+      specific_user_id: body.specificUserId || null,
+      publish_at: publishAt,
+      expires_at: expiresAt,
+      status: body.status,
+      created_by: req.user!.id,
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    memoryNotifications.unshift(notification);
+    return res.status(201).json(notification);
+  }
+  const result = await query(
+    `INSERT INTO notifications (title,message,type,priority,target,specific_user_id,publish_at,expires_at,status,created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [body.title, body.message, body.type, body.priority, body.target, body.specificUserId || null, publishAt, expiresAt, body.status, req.user!.id]
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.put('/api/admin/notifications/:id', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+  const body = notificationSchema.parse(req.body);
+  const notificationId = routeParam(req.params.id);
+  if (body.target === 'Specific User' && !body.specificUserId) throw new Error('Select a specific user.');
+  const publishAt = new Date(body.publishAt);
+  const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+  if (Number.isNaN(publishAt.getTime())) throw new Error('Publish date/time is invalid.');
+  if (expiresAt && (Number.isNaN(expiresAt.getTime()) || expiresAt <= publishAt)) throw new Error('Expiry must be after publish date/time.');
+  if (await preferMemory()) {
+    const notification = memoryNotifications.find((item) => item.id === notificationId);
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+    Object.assign(notification, {
+      title: body.title,
+      message: body.message,
+      type: body.type,
+      priority: body.priority,
+      target: body.target,
+      specific_user_id: body.specificUserId || null,
+      publish_at: publishAt,
+      expires_at: expiresAt,
+      status: body.status,
+      updated_at: new Date()
+    });
+    return res.json(notification);
+  }
+  const result = await query(
+    `UPDATE notifications SET title=$1,message=$2,type=$3,priority=$4,target=$5,specific_user_id=$6,publish_at=$7,expires_at=$8,status=$9,updated_at=now()
+     WHERE id=$10 RETURNING *`,
+    [body.title, body.message, body.type, body.priority, body.target, body.specificUserId || null, publishAt, expiresAt, body.status, notificationId]
+  );
+  res.json(result.rows[0]);
+}));
+
+app.patch('/api/admin/notifications/:id/publish', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+  const notificationId = routeParam(req.params.id);
+  if (await preferMemory()) {
+    const notification = memoryNotifications.find((item) => item.id === notificationId);
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+    notification.status = 'Published';
+    notification.publish_at = notification.publish_at > new Date() ? notification.publish_at : new Date();
+    notification.updated_at = new Date();
+    return res.json(notification);
+  }
+  const result = await query(`UPDATE notifications SET status='Published', publish_at=CASE WHEN publish_at>now() THEN publish_at ELSE now() END, updated_at=now() WHERE id=$1 RETURNING *`, [notificationId]);
+  res.json(result.rows[0]);
+}));
+
+app.delete('/api/admin/notifications/:id', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+  const notificationId = routeParam(req.params.id);
+  if (await preferMemory()) {
+    const index = memoryNotifications.findIndex((item) => item.id === notificationId);
+    if (index >= 0) memoryNotifications.splice(index, 1);
+    return res.status(204).end();
+  }
+  await query('DELETE FROM notifications WHERE id=$1', [notificationId]);
+  res.status(204).end();
 }));
 
 app.get('/api/admin/questions', requireAuth, requireAdmin, asyncRoute(async (_req, res) => {

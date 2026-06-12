@@ -11,6 +11,7 @@ import Friends from './pages/Friends';
 import Groups from './pages/Groups';
 import Leaderboard from './pages/Leaderboard';
 import MockTests from './pages/MockTests';
+import Notifications from './pages/Notifications';
 import ProfileForm from './pages/ProfileForm';
 import QuestionBank from './pages/QuestionBank';
 import './styles.css';
@@ -30,6 +31,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="groups" element={<Groups />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="leaderboard" element={<Leaderboard />} />
+          <Route path="notifications" element={<Notifications />} />
           <Route path="admin" element={<Admin />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
