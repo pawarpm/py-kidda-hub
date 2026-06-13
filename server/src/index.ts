@@ -2589,6 +2589,37 @@ app.post('/api/notifications/:id/read', requireAuth, asyncRoute(async (req, res)
   res.json({ ok: true });
 }));
 
+app.post('/api/notifications/read-all', requireAuth, asyncRoute(async (req, res) => {
+  if (await preferMemory()) {
+    seedNotifications();
+    const visibleNotifications = memoryNotifications.filter((notification) => notificationApplies(notification, req.user!));
+    for (const notification of visibleNotifications) {
+      let state = memoryNotificationReads.find((item) => item.notification_id === notification.id && item.user_id === req.user!.id);
+      if (!state) {
+        state = { notification_id: notification.id, user_id: req.user!.id };
+        memoryNotificationReads.push(state);
+      }
+      state.read_at = state.read_at || new Date();
+    }
+    return res.json({ ok: true, count: visibleNotifications.length });
+  }
+
+  await query(
+    `INSERT INTO notification_user_status (notification_id, user_id, read_at)
+     SELECT n.id, $1, now()
+     FROM notifications n
+     LEFT JOIN notification_user_status ns ON ns.notification_id=n.id AND ns.user_id=$1
+     WHERE n.status='Published'
+       AND n.publish_at<=now()
+       AND (n.expires_at IS NULL OR n.expires_at>now())
+       AND (n.target='All Users' OR (n.target='Students' AND $2='student') OR (n.target='Admins' AND $2='admin') OR (n.target='Specific User' AND n.specific_user_id=$1))
+       AND ns.cleared_at IS NULL
+     ON CONFLICT (notification_id, user_id) DO UPDATE SET read_at=coalesce(notification_user_status.read_at, now())`,
+    [req.user!.id, req.user!.role]
+  );
+  res.json({ ok: true });
+}));
+
 app.post('/api/notifications/:id/clear', requireAuth, asyncRoute(async (req, res) => {
   const notificationId = routeParam(req.params.id);
   if (await preferMemory()) {
