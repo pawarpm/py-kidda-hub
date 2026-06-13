@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Award, BarChart3, Bell, Code2, Info, LayoutDashboard, LifeBuoy, Loader2, Lock, LogOut, MessageSquareText, Moon, Search, Settings, Shield, Sun, UserRound, Users, X, Trophy, Timer } from 'lucide-react';
+import { BarChart3, Bell, Code2, Info, LayoutDashboard, LifeBuoy, Loader2, LogOut, MessageSquareText, Moon, Settings, Shield, Sun, UserRound, Users, X, Trophy, Timer } from 'lucide-react';
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, clearSession, getToken, getUser } from '../lib/api';
 import { NotificationItem, priorityClass } from '../pages/Notifications';
@@ -14,22 +14,6 @@ const nav = [
   { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
   { to: '/reports', label: 'Report / Feedback', icon: LifeBuoy }
 ];
-
-type StudentSearchResult = {
-  id: string;
-  name: string;
-  profilePictureUrl?: string | null;
-  status: 'online' | 'idle' | 'offline';
-  isProgressPublic: boolean;
-  progress?: {
-    solvedProblems: number;
-    totalScore: number;
-    completedTopics: string[];
-    badges: string[];
-    ranking?: number | null;
-    recentActivity?: string | null;
-  } | null;
-};
 
 function statusClasses(status?: string) {
   if (status === 'online') return 'bg-emerald-500 text-emerald-700';
@@ -56,10 +40,6 @@ export default function AppShell() {
   const user = getUser();
   const [showCreditsInfo, setShowCreditsInfo] = useState(false);
   const [profileCheck, setProfileCheck] = useState<{ loading: boolean; exists: boolean; profile: any | null }>({ loading: true, exists: false, profile: null });
-  const [searchText, setSearchText] = useState('');
-  const [searchResults, setSearchResults] = useState<StudentSearchResult[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchError, setSearchError] = useState('');
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -150,37 +130,6 @@ export default function AppShell() {
       window.removeEventListener('beforeunload', markClosed);
     };
   }, [user?.id, user?.role]);
-
-  useEffect(() => {
-    if (!user || user.role === 'admin') return;
-    const query = searchText.trim();
-    if (!query) {
-      setSearchResults([]);
-      setSearchError('');
-      setSearchLoading(false);
-      return;
-    }
-    let active = true;
-    setSearchLoading(true);
-    setSearchError('');
-    const timer = window.setTimeout(() => {
-      api<StudentSearchResult[]>(`/students/search?q=${encodeURIComponent(query)}`)
-        .then((results) => {
-          if (!active) return;
-          setSearchResults(results);
-        })
-        .catch((err) => {
-          if (!active) return;
-          setSearchError(err instanceof Error ? err.message : 'Could not search students.');
-          setSearchResults([]);
-        })
-        .finally(() => active && setSearchLoading(false));
-    }, 250);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [searchText, user?.id, user?.role]);
 
   async function loadNotifications(showToast = false) {
     if (!user) return;
@@ -310,85 +259,6 @@ export default function AppShell() {
               <div className="text-xs text-slate-500">{user.college}</div>
             </div>
           </div>
-          {user.role !== 'admin' && (
-            <div className="relative w-full lg:max-w-lg">
-              <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus-within:border-brand focus-within:ring-2 focus-within:ring-blue-100">
-                <Search size={17} className="text-slate-400" />
-                <input
-                  className="w-full bg-transparent text-sm outline-none"
-                  placeholder="Search students by name"
-                  value={searchText}
-                  onChange={(event) => setSearchText(event.target.value)}
-                />
-                {searchText && (
-                  <button className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700" type="button" aria-label="Clear search" onClick={() => setSearchText('')}>
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-              {searchText.trim() && (
-                <div className="absolute left-0 right-0 top-full mt-2 max-h-[70vh] overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-panel">
-                  {searchLoading && (
-                    <div className="flex items-center justify-center gap-2 p-4 text-sm text-slate-500">
-                      <Loader2 className="animate-spin" size={16} />
-                      Searching students
-                    </div>
-                  )}
-                  {searchError && <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{searchError}</div>}
-                  {!searchLoading && !searchError && searchResults.length === 0 && <div className="p-4 text-center text-sm text-slate-500">No students found</div>}
-                  {!searchLoading && !searchError && (
-                    <div className="space-y-2">
-                      {searchResults.map((student) => (
-                        <div key={student.id} className="rounded-lg border border-slate-200 p-3">
-                          <div className="flex items-start gap-3">
-                            <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-50 text-brand">
-                              {student.profilePictureUrl ? <img className="h-full w-full object-cover" src={student.profilePictureUrl} alt={student.name} /> : <UserRound size={20} />}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <div className="truncate text-sm font-bold text-slate-900">{student.name}</div>
-                                <div className={`inline-flex items-center gap-1 text-xs font-semibold ${statusClasses(student.status).split(' ')[1]}`}>
-                                  <span className={`h-2 w-2 rounded-full ${statusClasses(student.status).split(' ')[0]}`} />
-                                  {student.status[0].toUpperCase() + student.status.slice(1)}
-                                </div>
-                              </div>
-                              {student.isProgressPublic && student.progress ? (
-                                <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-                                  <div className="rounded-md bg-slate-50 p-2">
-                                    <span className="font-bold text-slate-900">{student.progress.solvedProblems}</span> solved
-                                  </div>
-                                  <div className="rounded-md bg-slate-50 p-2">
-                                    <span className="font-bold text-slate-900">{student.progress.totalScore}</span> points
-                                  </div>
-                                  <div className="rounded-md bg-slate-50 p-2 sm:col-span-2">
-                                    Topics: {student.progress.completedTopics.length ? student.progress.completedTopics.join(', ') : 'No completed topics yet'}
-                                  </div>
-                                  <div className="flex flex-wrap gap-1 sm:col-span-2">
-                                    {student.progress.badges.length ? student.progress.badges.map((badge) => (
-                                      <span key={badge} className="inline-flex items-center gap-1 rounded bg-amber-50 px-2 py-1 font-bold text-amber-700">
-                                        <Award size={12} />
-                                        {badge}
-                                      </span>
-                                    )) : <span className="text-slate-500">No badges yet</span>}
-                                  </div>
-                                  {student.progress.recentActivity && <div className="text-slate-500 sm:col-span-2">Recent activity: {new Date(student.progress.recentActivity).toLocaleDateString()}</div>}
-                                </div>
-                              ) : (
-                                <div className="mt-2 inline-flex items-center gap-1 rounded bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-500">
-                                  <Lock size={12} />
-                                  Progress is private
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
           <div className="flex shrink-0 items-center gap-2 self-end lg:self-auto">
             <button
               className="btn btn-soft"
