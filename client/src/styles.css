@@ -326,6 +326,10 @@ button, input, select, textarea {
   animation: feedback-pop 1.5s ease both;
 }
 
+.proctoring-active {
+  user-select: none;
+}
+
 .confetti-field {
   position: absolute;
   inset: 0;
