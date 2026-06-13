@@ -8,6 +8,10 @@ type StudentProgress = {
   email: string;
   college: string;
   role: 'student' | 'admin';
+  authProvider?: string;
+  emailVerified?: boolean;
+  lastLogin?: string | null;
+  accountStatus?: string;
   attempts: number;
   solved: number;
   attemptedQuestions: number;
@@ -246,6 +250,13 @@ export default function Admin() {
                 <div className="font-semibold">{student.name}</div>
                 <div className="text-sm text-slate-500">{student.email}</div>
                 <div className="text-xs text-slate-400">{student.college}</div>
+                <div className="mt-2 flex flex-wrap gap-1 text-[11px] font-bold">
+                  <span className="rounded bg-blue-50 px-2 py-1 text-brand">{student.authProvider || 'password'}</span>
+                  <span className={`rounded px-2 py-1 ${student.emailVerified ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                    {student.emailVerified ? 'Email verified' : 'Email pending'}
+                  </span>
+                  <span className="rounded bg-slate-100 px-2 py-1 text-slate-600">{student.accountStatus || 'active'}</span>
+                </div>
               </div>
               <div className="text-sm text-slate-600">
                 <div><b>{student.solved}</b> solved</div>
@@ -264,7 +275,8 @@ export default function Admin() {
                 </div>
               </div>
               <div className="text-sm text-slate-500">
-                {student.lastSubmissionAt ? new Date(student.lastSubmissionAt).toLocaleDateString() : 'No activity'}
+                <div>{student.lastSubmissionAt ? new Date(student.lastSubmissionAt).toLocaleDateString() : 'No activity'}</div>
+                <div className="text-xs text-slate-400">Login: {student.lastLogin ? new Date(student.lastLogin).toLocaleDateString() : 'Never'}</div>
               </div>
             </div>
           ))}
