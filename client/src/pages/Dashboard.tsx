@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, LifeBuoy, Sparkles, Timer } from 'lucide-react';
+import { BookOpen, LifeBuoy, Timer } from 'lucide-react';
 import Metric from '../components/Metric';
 import { api, getUser } from '../lib/api';
 
@@ -13,7 +13,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
+      <section>
         <div className="panel p-6">
           <div className="mb-3 text-sm font-bold text-brand">Student Dashboard</div>
           <h1 className="text-3xl font-bold tracking-normal">Good to see you, {user?.name.split(' ')[0]}.</h1>
@@ -23,10 +23,6 @@ export default function Dashboard() {
             <Link className="btn btn-soft" to="/mock-tests"><Timer size={16} /> Take Mock Test</Link>
             <Link className="btn btn-soft" to="/reports"><LifeBuoy size={16} /> Report / Feedback</Link>
           </div>
-        </div>
-        <div className="panel p-6">
-          <div className="flex items-center gap-2 text-sm font-bold text-coral"><Sparkles size={18} /> AI Tutor</div>
-          <p className="mt-3 text-sm text-slate-600">Paste runtime errors in the coding room and ask for hints, concept explanations, and learning recommendations without revealing the full answer.</p>
         </div>
       </section>
 
