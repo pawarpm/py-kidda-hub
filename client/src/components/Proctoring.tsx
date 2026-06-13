@@ -79,6 +79,11 @@ export function useProctoring({ attempt, enabled, onAutoSubmit }: ProctoringOpti
   const [locked, setLocked] = useState(false);
   const lastEventAt = useRef<Record<string, number>>({});
   const autoSubmittingRef = useRef(false);
+  const onAutoSubmitRef = useRef(onAutoSubmit);
+
+  useEffect(() => {
+    onAutoSubmitRef.current = onAutoSubmit;
+  }, [onAutoSubmit]);
 
   const logViolation = useCallback(async (type: string, message: string, webcamStatus = attempt?.webcamEnabled ? 'enabled' : 'not_required') => {
     if (!enabled || !attempt?.attemptId || autoSubmittingRef.current) return;
@@ -97,8 +102,8 @@ export function useProctoring({ attempt, enabled, onAutoSubmit }: ProctoringOpti
         autoSubmittingRef.current = true;
         const reason = response.reason || message;
         setLocked(true);
-        if (onAutoSubmit) {
-          await onAutoSubmit(reason);
+        if (onAutoSubmitRef.current) {
+          await onAutoSubmitRef.current(reason);
         } else {
           await submitAttemptForProctoring(attempt.attemptId, reason);
           window.location.assign('/mock-tests');
@@ -114,10 +119,15 @@ export function useProctoring({ attempt, enabled, onAutoSubmit }: ProctoringOpti
     } catch {
       setWarning({ count: 1, message: 'Could not log proctoring event. Please stay on the test screen.' });
     }
-  }, [attempt?.attemptId, attempt?.webcamEnabled, enabled, onAutoSubmit]);
+  }, [attempt?.attemptId, attempt?.webcamEnabled, enabled]);
 
   useEffect(() => {
     if (!enabled || !attempt?.attemptId) return;
+    let lastResizeAt = 0;
+    let hasSettled = false;
+    const settleTimer = window.setTimeout(() => {
+      hasSettled = true;
+    }, 1200);
 
     const blockMouse = (event: MouseEvent) => {
       event.preventDefault();
@@ -146,7 +156,12 @@ export function useProctoring({ attempt, enabled, onAutoSubmit }: ProctoringOpti
     const onFullscreen = () => {
       if (!document.fullscreenElement) logViolation('fullscreen_exit', 'Please do not exit full-screen mode during the test.');
     };
-    const onResize = () => logViolation('resize', 'Repeated resizing during the test is marked for review.');
+    const onResize = () => {
+      const now = Date.now();
+      if (!hasSettled || now - lastResizeAt < 4000) return;
+      lastResizeAt = now;
+      logViolation('resize', 'Repeated resizing during the test is marked for review.');
+    };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       logViolation('leaving_page', 'Leaving or refreshing the test page is not allowed.');
       event.preventDefault();
@@ -167,6 +182,7 @@ export function useProctoring({ attempt, enabled, onAutoSubmit }: ProctoringOpti
     window.addEventListener('beforeunload', onBeforeUnload);
 
     return () => {
+      window.clearTimeout(settleTimer);
       document.body.classList.remove('proctoring-active');
       document.removeEventListener('contextmenu', blockMouse);
       document.removeEventListener('copy', blockClipboard);
@@ -265,7 +281,12 @@ export function TestDeclaration({
 export function WebcamMonitor({ enabled, onIssue }: { enabled: boolean; onIssue: (type: string, message: string, webcamStatus?: string) => void }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const onIssueRef = useRef(onIssue);
   const [status, setStatus] = useState(enabled ? 'Starting camera...' : 'Camera off');
+
+  useEffect(() => {
+    onIssueRef.current = onIssue;
+  }, [onIssue]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -282,16 +303,17 @@ export function WebcamMonitor({ enabled, onIssue }: { enabled: boolean; onIssue:
         setStatus('Camera active');
         stream.getVideoTracks()[0]?.addEventListener('ended', () => {
           setStatus('Camera stopped');
-          onIssue('camera_disabled', 'Camera was disabled during the mock test.', 'disabled');
+          onIssueRef.current('camera_disabled', 'Camera was disabled during the mock test.', 'disabled');
         });
       })
       .catch(() => {
         setStatus('Camera permission denied');
-        onIssue('camera_denied', 'Camera permission was denied for webcam monitoring.', 'denied');
+        onIssueRef.current('camera_denied', 'Camera permission was denied for webcam monitoring.', 'denied');
       });
 
     const lookCheck = window.setInterval(() => {
-      onIssue('webcam_check', 'Random look-at-camera check during the test.', status === 'Camera active' ? 'enabled' : 'review_required');
+      const active = streamRef.current?.getVideoTracks().some((track) => track.readyState === 'live');
+      onIssueRef.current('webcam_check', 'Random look-at-camera check during the test.', active ? 'enabled' : 'review_required');
     }, 8 * 60 * 1000);
 
     return () => {
@@ -299,7 +321,7 @@ export function WebcamMonitor({ enabled, onIssue }: { enabled: boolean; onIssue:
       window.clearInterval(lookCheck);
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
-  }, [enabled, onIssue, status]);
+  }, [enabled]);
 
   if (!enabled) return null;
   return (
