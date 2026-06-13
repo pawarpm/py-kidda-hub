@@ -207,6 +207,47 @@ CREATE TABLE IF NOT EXISTS notification_user_status (
   PRIMARY KEY (notification_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reporter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('Technical Bug', 'App Glitch', 'Question/Test Problem', 'Wrong Test Case or Output', 'Abusive Language', 'Misbehavior', 'Group/Chat Issue', 'Account/Login Issue', 'Suggestion', 'General Feedback')),
+  description TEXT NOT NULL,
+  related_module TEXT,
+  related_question_id TEXT,
+  reported_user_identifier TEXT,
+  reported_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  priority TEXT NOT NULL CHECK (priority IN ('Low', 'Medium', 'High', 'Urgent')) DEFAULT 'Medium',
+  status TEXT NOT NULL CHECK (status IN ('New', 'Under Review', 'Resolved', 'Rejected')) DEFAULT 'New',
+  admin_remarks TEXT,
+  assigned_admin_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  moderation_action TEXT NOT NULL CHECK (moderation_action IN ('None', 'Warning Placeholder', 'Suspend Placeholder', 'Ban Placeholder')) DEFAULT 'None',
+  attachment_url TEXT,
+  attachment_name TEXT,
+  attachment_type TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS report_comments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  report_id UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  comment TEXT NOT NULL,
+  is_admin BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS report_status_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  report_id UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+  changed_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  old_status TEXT,
+  new_status TEXT NOT NULL,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_questions_topic ON questions(topic);
 CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty);
 CREATE INDEX IF NOT EXISTS idx_submissions_user_created ON submissions(user_id, created_at DESC);
@@ -216,3 +257,6 @@ CREATE INDEX IF NOT EXISTS idx_private_messages_chat ON private_messages(chat_id
 CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_target_status ON notifications(status, target, publish_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_user_status_user ON notification_user_status(user_id);
+CREATE INDEX IF NOT EXISTS idx_reports_status_priority ON reports(status, priority, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_comments_report ON report_comments(report_id, created_at);

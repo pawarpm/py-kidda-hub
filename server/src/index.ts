@@ -118,6 +118,47 @@ type MemoryNotification = {
 };
 const memoryNotificationReads: Array<{ notification_id: string; user_id: string; read_at?: Date | null; cleared_at?: Date | null }> = [];
 const memoryNotifications: MemoryNotification[] = [];
+const reportCategories = [
+  'Technical Bug',
+  'App Glitch',
+  'Question/Test Problem',
+  'Wrong Test Case or Output',
+  'Abusive Language',
+  'Misbehavior',
+  'Group/Chat Issue',
+  'Account/Login Issue',
+  'Suggestion',
+  'General Feedback'
+] as const;
+const reportPriorities = ['Low', 'Medium', 'High', 'Urgent'] as const;
+const reportStatuses = ['New', 'Under Review', 'Resolved', 'Rejected'] as const;
+const moderationActions = ['None', 'Warning Placeholder', 'Suspend Placeholder', 'Ban Placeholder'] as const;
+type MemoryReport = {
+  id: string;
+  reporter_id: string;
+  title: string;
+  category: (typeof reportCategories)[number];
+  description: string;
+  related_module?: string | null;
+  related_question_id?: string | null;
+  reported_user_identifier?: string | null;
+  reported_user_id?: string | null;
+  priority: (typeof reportPriorities)[number];
+  status: (typeof reportStatuses)[number];
+  admin_remarks?: string | null;
+  assigned_admin_id?: string | null;
+  moderation_action: (typeof moderationActions)[number];
+  attachment_url?: string | null;
+  attachment_name?: string | null;
+  attachment_type?: string | null;
+  created_at: Date;
+  updated_at: Date;
+};
+type MemoryReportComment = { id: string; report_id: string; user_id: string; comment: string; is_admin: boolean; created_at: Date };
+type MemoryReportStatusHistory = { id: string; report_id: string; changed_by: string; old_status?: string | null; new_status: string; note?: string | null; created_at: Date };
+const memoryReports: MemoryReport[] = [];
+const memoryReportComments: MemoryReportComment[] = [];
+const memoryReportStatusHistory: MemoryReportStatusHistory[] = [];
 
 function createMemoryQuestion(seed: {
   title: string;
@@ -272,6 +313,24 @@ async function saveProfilePicture(userId: string, picture?: { name: string; type
   return `/uploads/${filename}`;
 }
 
+async function saveReportAttachment(userId: string, file?: { name: string; type: string; dataUrl: string }) {
+  if (!file) return null;
+  const allowedTypes = ['image/', 'application/pdf', 'text/plain'];
+  if (!allowedTypes.some((type) => file.type.startsWith(type))) {
+    throw new Error('Attachment must be an image, PDF, or text file.');
+  }
+  const match = file.dataUrl.match(/^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/);
+  if (!match) throw new Error('Attachment upload is invalid.');
+  const buffer = Buffer.from(match[2], 'base64');
+  if (buffer.byteLength > 4 * 1024 * 1024) throw new Error('Attachment must be smaller than 4 MB.');
+  const originalExtension = path.extname(file.name).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 12);
+  const extension = originalExtension || `.${match[1].split('/')[1]?.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'dat'}`;
+  await fs.mkdir(uploadDir, { recursive: true });
+  const filename = `${userId}-report-${randomUUID()}${extension}`;
+  await fs.writeFile(path.join(uploadDir, filename), buffer);
+  return { url: `/uploads/${filename}`, name: file.name, type: file.type };
+}
+
 function studentCard(userId: string) {
   const user = memoryUsers.find((item) => item.id === userId);
   if (!user) return null;
@@ -359,6 +418,47 @@ function notificationReadCount(notificationId: string) {
   return memoryNotificationReads.filter((item) => item.notification_id === notificationId && item.read_at).length;
 }
 
+function adminUserId() {
+  return memoryUsers.find((user) => user.role === 'admin')?.id || memoryUsers[0].id;
+}
+
+async function createNotification(payload: {
+  title: string;
+  message: string;
+  type?: (typeof notificationTypes)[number];
+  priority?: (typeof notificationPriorities)[number];
+  target: (typeof notificationTargets)[number];
+  specificUserId?: string | null;
+  createdBy: string;
+}) {
+  const now = new Date();
+  if (await preferMemory()) {
+    const notification: MemoryNotification = {
+      id: randomUUID(),
+      title: payload.title,
+      message: payload.message,
+      type: payload.type || 'General',
+      priority: payload.priority || 'Medium',
+      target: payload.target,
+      specific_user_id: payload.specificUserId || null,
+      publish_at: now,
+      expires_at: null,
+      status: 'Published',
+      created_by: payload.createdBy,
+      created_at: now,
+      updated_at: now
+    };
+    memoryNotifications.unshift(notification);
+    return notification;
+  }
+  await query(
+    `INSERT INTO notifications (title,message,type,priority,target,specific_user_id,publish_at,status,created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,now(),'Published',$7)`,
+    [payload.title, payload.message, payload.type || 'General', payload.priority || 'Medium', payload.target, payload.specificUserId || null, payload.createdBy]
+  );
+  return null;
+}
+
 function defaultNotifications() {
   return [
     { title: 'Welcome to Py Kidda Hub', message: 'Welcome to PY Kidda Hub(PKH). Start practicing Python and track your progress.', type: 'Announcement' as const, priority: 'High' as const },
@@ -367,6 +467,115 @@ function defaultNotifications() {
     { title: 'Friends and Groups Feature Added', message: 'You can now add friends, send private messages, create study groups, and discuss Python doubts with classmates.', type: 'Feature Update' as const, priority: 'High' as const },
     { title: 'Notification Center Added', message: 'A new bell icon now shows announcements, feature updates, maintenance messages, and important app changes for every user.', type: 'Feature Update' as const, priority: 'High' as const }
   ];
+}
+
+function reportView(report: MemoryReport) {
+  const reporter = memoryUsers.find((user) => user.id === report.reporter_id);
+  const assignedAdmin = report.assigned_admin_id ? memoryUsers.find((user) => user.id === report.assigned_admin_id) : null;
+  const reportedUser = report.reported_user_id ? memoryUsers.find((user) => user.id === report.reported_user_id) : null;
+  return {
+    ...report,
+    reporterName: reporter?.name || 'Unknown user',
+    reporterEmail: reporter?.email || '',
+    assignedAdminName: assignedAdmin?.name || null,
+    reportedUserName: reportedUser?.name || null,
+    comments: memoryReportComments
+      .filter((comment) => comment.report_id === report.id)
+      .map((comment) => ({ ...comment, authorName: memoryUsers.find((user) => user.id === comment.user_id)?.name || 'User' }))
+      .sort((a, b) => a.created_at.getTime() - b.created_at.getTime()),
+    history: memoryReportStatusHistory.filter((item) => item.report_id === report.id).sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
+  };
+}
+
+function seedReports() {
+  if (memoryReports.length > 0) return;
+  const student = memoryUsers.find((user) => user.role === 'student') || memoryUsers[0];
+  const admin = memoryUsers.find((user) => user.role === 'admin') || memoryUsers[0];
+  const samples = [
+    {
+      title: 'Bug report for login issue',
+      category: 'Account/Login Issue' as const,
+      description: 'Login page sometimes shows failed to fetch when the backend is not reachable.',
+      related_module: 'Login',
+      reported_user_identifier: null,
+      priority: 'High' as const
+    },
+    {
+      title: 'Suggestion report for adding new Python problems',
+      category: 'Suggestion' as const,
+      description: 'Please add more syllabus-based Python problems for file handling and data preprocessing.',
+      related_module: 'Question Bank',
+      reported_user_identifier: null,
+      priority: 'Medium' as const
+    },
+    {
+      title: 'Abuse report against a sample user',
+      category: 'Abusive Language' as const,
+      description: 'A sample user used abusive language in chat. Admin should review chat context.',
+      related_module: 'Chat',
+      reported_user_identifier: 'sample.user@example.com',
+      priority: 'Urgent' as const
+    },
+    {
+      title: 'Wrong answer/test case report',
+      category: 'Wrong Test Case or Output' as const,
+      description: 'One hidden test case appears to expect the wrong output for a practice problem.',
+      related_module: 'Coding Room',
+      reported_user_identifier: null,
+      priority: 'High' as const
+    }
+  ];
+  for (const sample of samples) {
+    const id = randomUUID();
+    memoryReports.push({
+      id,
+      reporter_id: student.id,
+      related_question_id: null,
+      reported_user_id: null,
+      status: 'New',
+      admin_remarks: '',
+      assigned_admin_id: admin.id,
+      moderation_action: 'None',
+      attachment_url: null,
+      attachment_name: null,
+      attachment_type: null,
+      created_at: new Date(Date.now() - memoryReports.length * 90_000),
+      updated_at: new Date(),
+      ...sample
+    });
+    memoryReportStatusHistory.push({ id: randomUUID(), report_id: id, changed_by: admin.id, old_status: null, new_status: 'New', note: 'Sample report created for testing.', created_at: new Date() });
+  }
+}
+
+async function ensureSampleReports() {
+  const admin = await query("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1");
+  const student = await query("SELECT id FROM users WHERE role='student' ORDER BY created_at LIMIT 1");
+  const adminId = admin.rows[0]?.id;
+  const studentId = student.rows[0]?.id;
+  if (!adminId || !studentId) return;
+  const samples = [
+    ['Bug report for login issue', 'Account/Login Issue', 'Login page sometimes shows failed to fetch when the backend is not reachable.', 'Login', null, 'High'],
+    ['Suggestion report for adding new Python problems', 'Suggestion', 'Please add more syllabus-based Python problems for file handling and data preprocessing.', 'Question Bank', null, 'Medium'],
+    ['Abuse report against a sample user', 'Abusive Language', 'A sample user used abusive language in chat. Admin should review chat context.', 'Chat', 'sample.user@example.com', 'Urgent'],
+    ['Wrong answer/test case report', 'Wrong Test Case or Output', 'One hidden test case appears to expect the wrong output for a practice problem.', 'Coding Room', null, 'High']
+  ];
+  for (const sample of samples) {
+    const inserted = await query<{ id: string }>(
+      `INSERT INTO reports (reporter_id,title,category,description,related_module,reported_user_identifier,priority,status,assigned_admin_id)
+       SELECT $1,$2,$3,$4,$5,$6,$7,'New',$8
+       WHERE NOT EXISTS (SELECT 1 FROM reports WHERE title=$2)
+       RETURNING id`,
+      [studentId, ...sample, adminId]
+    );
+    const reportId = inserted.rows[0]?.id;
+    if (reportId) {
+      await query(
+        `INSERT INTO report_status_history (report_id,changed_by,old_status,new_status,note)
+         VALUES ($1,$2,NULL,'New','Sample report created for testing.')`,
+        [reportId, adminId]
+      );
+    }
+  }
 }
 
 function seedNotifications() {
@@ -467,6 +676,36 @@ const notificationSchema = z.object({
   publishAt: z.string().min(1),
   expiresAt: z.string().optional().or(z.literal('')),
   status: z.enum(notificationStatuses)
+});
+
+const reportAttachmentSchema = z
+  .object({
+    name: z.string().min(1).max(180),
+    type: z.string().min(1).max(120),
+    dataUrl: z.string().min(20)
+  })
+  .optional();
+
+const reportCreateSchema = z.object({
+  title: z.string().trim().min(3, 'Report title is required.').max(160),
+  category: z.enum(reportCategories),
+  description: z.string().trim().min(10, 'Detailed description is required.').max(4000),
+  relatedModule: z.string().trim().max(120).optional().or(z.literal('')),
+  relatedQuestionId: z.string().trim().max(120).optional().or(z.literal('')),
+  reportedUserIdentifier: z.string().trim().max(180).optional().or(z.literal('')),
+  priority: z.enum(reportPriorities),
+  attachment: reportAttachmentSchema
+});
+
+const reportCommentSchema = z.object({
+  comment: z.string().trim().min(2).max(1500)
+});
+
+const reportAdminUpdateSchema = z.object({
+  status: z.enum(reportStatuses),
+  adminRemarks: z.string().trim().max(2500).optional().or(z.literal('')),
+  assignedAdminId: z.string().uuid().optional().or(z.literal('')),
+  moderationAction: z.enum(moderationActions).optional()
 });
 
 app.use(helmet());
@@ -1475,6 +1714,265 @@ app.post('/api/mock-attempts/:id/submit', requireAuth, asyncRoute(async (req, re
     totalQuestions: results.rows.length,
     results: results.rows
   });
+}));
+
+app.get('/api/reports', requireAuth, asyncRoute(async (req, res) => {
+  if (await preferMemory()) {
+    seedReports();
+    return res.json(memoryReports.filter((report) => report.reporter_id === req.user!.id).map(reportView).sort((a, b) => b.created_at.getTime() - a.created_at.getTime()));
+  }
+  await ensureSampleReports();
+  const reports = await query(
+    `SELECT r.*,
+            au.name AS "assignedAdminName",
+            ru.name AS "reportedUserName"
+     FROM reports r
+     LEFT JOIN users au ON au.id=r.assigned_admin_id
+     LEFT JOIN users ru ON ru.id=r.reported_user_id
+     WHERE r.reporter_id=$1
+     ORDER BY r.created_at DESC`,
+    [req.user!.id]
+  );
+  const ids = reports.rows.map((row: any) => row.id);
+  const comments = ids.length
+    ? await query(
+        `SELECT rc.*, u.name AS "authorName"
+         FROM report_comments rc JOIN users u ON u.id=rc.user_id
+         WHERE rc.report_id = ANY($1::uuid[])
+         ORDER BY rc.created_at`,
+        [ids]
+      )
+    : { rows: [] };
+  res.json(reports.rows.map((report: any) => ({ ...report, comments: comments.rows.filter((comment: any) => comment.report_id === report.id) })));
+}));
+
+app.post('/api/reports', requireAuth, asyncRoute(async (req, res) => {
+  const body = reportCreateSchema.parse(req.body);
+  const attachment = await saveReportAttachment(req.user!.id, body.attachment);
+  const relatedQuestionId = body.relatedQuestionId || null;
+  const reportedIdentifier = body.reportedUserIdentifier || null;
+
+  if (await preferMemory()) {
+    const reportedUser = reportedIdentifier ? memoryUsers.find((user) => user.email === reportedIdentifier || user.name.toLowerCase() === reportedIdentifier.toLowerCase()) : null;
+    const report: MemoryReport = {
+      id: randomUUID(),
+      reporter_id: req.user!.id,
+      title: body.title,
+      category: body.category,
+      description: body.description,
+      related_module: body.relatedModule || null,
+      related_question_id: relatedQuestionId,
+      reported_user_identifier: reportedIdentifier,
+      reported_user_id: reportedUser?.id || null,
+      priority: body.priority,
+      status: 'New',
+      admin_remarks: '',
+      assigned_admin_id: null,
+      moderation_action: 'None',
+      attachment_url: attachment?.url || null,
+      attachment_name: attachment?.name || null,
+      attachment_type: attachment?.type || null,
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    memoryReports.unshift(report);
+    memoryReportStatusHistory.push({ id: randomUUID(), report_id: report.id, changed_by: req.user!.id, old_status: null, new_status: 'New', note: 'Report submitted.', created_at: new Date() });
+    await createNotification({
+      title: 'New Report Submitted',
+      message: `${req.user!.name} submitted: ${report.title}`,
+      type: 'Announcement',
+      priority: report.priority === 'Urgent' ? 'High' : 'Medium',
+      target: 'Admins',
+      createdBy: req.user!.id
+    });
+    return res.status(201).json(reportView(report));
+  }
+
+  const reportedUser = reportedIdentifier ? await query('SELECT id FROM users WHERE email=$1 OR lower(name)=lower($1) LIMIT 1', [reportedIdentifier]) : { rows: [] };
+  const inserted = await query<{ id: string }>(
+    `INSERT INTO reports
+      (reporter_id,title,category,description,related_module,related_question_id,reported_user_identifier,reported_user_id,priority,attachment_url,attachment_name,attachment_type)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     RETURNING *`,
+    [
+      req.user!.id,
+      body.title,
+      body.category,
+      body.description,
+      body.relatedModule || null,
+      relatedQuestionId,
+      reportedIdentifier,
+      reportedUser.rows[0]?.id || null,
+      body.priority,
+      attachment?.url || null,
+      attachment?.name || null,
+      attachment?.type || null
+    ]
+  );
+  const report = inserted.rows[0] as any;
+  await query('INSERT INTO report_status_history (report_id,changed_by,old_status,new_status,note) VALUES ($1,$2,NULL,$3,$4)', [report.id, req.user!.id, 'New', 'Report submitted.']);
+  await createNotification({
+    title: 'New Report Submitted',
+    message: `${req.user!.name} submitted: ${report.title}`,
+    type: 'Announcement',
+    priority: report.priority === 'Urgent' ? 'High' : 'Medium',
+    target: 'Admins',
+    createdBy: req.user!.id
+  });
+  res.status(201).json(report);
+}));
+
+app.post('/api/reports/:id/comments', requireAuth, asyncRoute(async (req, res) => {
+  const reportId = routeParam(req.params.id);
+  const body = reportCommentSchema.parse(req.body);
+  if (await preferMemory()) {
+    const report = memoryReports.find((item) => item.id === reportId);
+    if (!report) return res.status(404).json({ message: 'Report not found' });
+    const isAdmin = req.user!.role === 'admin';
+    if (!isAdmin && report.reporter_id !== req.user!.id) return res.status(403).json({ message: 'You can comment only on your own report.' });
+    const comment = { id: randomUUID(), report_id: report.id, user_id: req.user!.id, comment: body.comment, is_admin: isAdmin, created_at: new Date() };
+    memoryReportComments.push(comment);
+    report.updated_at = new Date();
+    if (isAdmin) {
+      await createNotification({ title: 'Admin Added Report Remark', message: `Admin replied on your report: ${report.title}`, target: 'Specific User', specificUserId: report.reporter_id, createdBy: req.user!.id, type: 'General', priority: 'Medium' });
+    } else {
+      await createNotification({ title: 'Report Follow-up Added', message: `${req.user!.name} added a follow-up on: ${report.title}`, target: 'Admins', createdBy: req.user!.id, type: 'General', priority: 'Medium' });
+    }
+    return res.status(201).json(comment);
+  }
+  const reportResult = await query('SELECT * FROM reports WHERE id=$1', [reportId]);
+  const report = reportResult.rows[0];
+  if (!report) return res.status(404).json({ message: 'Report not found' });
+  const isAdmin = req.user!.role === 'admin';
+  if (!isAdmin && report.reporter_id !== req.user!.id) return res.status(403).json({ message: 'You can comment only on your own report.' });
+  const inserted = await query(
+    `INSERT INTO report_comments (report_id,user_id,comment,is_admin)
+     VALUES ($1,$2,$3,$4)
+     RETURNING *`,
+    [reportId, req.user!.id, body.comment, isAdmin]
+  );
+  await query('UPDATE reports SET updated_at=now() WHERE id=$1', [reportId]);
+  if (isAdmin) {
+    await createNotification({ title: 'Admin Added Report Remark', message: `Admin replied on your report: ${report.title}`, target: 'Specific User', specificUserId: report.reporter_id, createdBy: req.user!.id, type: 'General', priority: 'Medium' });
+  } else {
+    await createNotification({ title: 'Report Follow-up Added', message: `${req.user!.name} added a follow-up on: ${report.title}`, target: 'Admins', createdBy: req.user!.id, type: 'General', priority: 'Medium' });
+  }
+  res.status(201).json(inserted.rows[0]);
+}));
+
+app.get('/api/admin/reports', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+  const status = String(req.query.status || '');
+  const category = String(req.query.category || '');
+  const priority = String(req.query.priority || '');
+  const userSearch = String(req.query.user || '').trim().toLowerCase();
+  const date = String(req.query.date || '');
+  if (await preferMemory()) {
+    seedReports();
+    const rows = memoryReports
+      .filter((report) => !status || report.status === status)
+      .filter((report) => !category || report.category === category)
+      .filter((report) => !priority || report.priority === priority)
+      .filter((report) => {
+        if (!userSearch) return true;
+        const reporter = memoryUsers.find((user) => user.id === report.reporter_id);
+        return reporter?.name.toLowerCase().includes(userSearch) || reporter?.email.toLowerCase().includes(userSearch);
+      })
+      .filter((report) => !date || report.created_at.toISOString().slice(0, 10) === date)
+      .map(reportView)
+      .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+    return res.json(rows);
+  }
+  await ensureSampleReports();
+  const reports = await query(
+    `SELECT r.*,
+            reporter.name AS "reporterName",
+            reporter.email AS "reporterEmail",
+            au.name AS "assignedAdminName",
+            ru.name AS "reportedUserName"
+     FROM reports r
+     JOIN users reporter ON reporter.id=r.reporter_id
+     LEFT JOIN users au ON au.id=r.assigned_admin_id
+     LEFT JOIN users ru ON ru.id=r.reported_user_id
+     WHERE ($1='' OR r.status=$1)
+       AND ($2='' OR r.category=$2)
+       AND ($3='' OR r.priority=$3)
+       AND ($4='' OR lower(reporter.name) LIKE '%' || $4 || '%' OR lower(reporter.email) LIKE '%' || $4 || '%')
+       AND ($5='' OR date(r.created_at)::text=$5)
+     ORDER BY r.created_at DESC`,
+    [status, category, priority, userSearch, date]
+  );
+  const ids = reports.rows.map((row: any) => row.id);
+  const comments = ids.length
+    ? await query(
+        `SELECT rc.*, u.name AS "authorName"
+         FROM report_comments rc JOIN users u ON u.id=rc.user_id
+         WHERE rc.report_id = ANY($1::uuid[])
+         ORDER BY rc.created_at`,
+        [ids]
+      )
+    : { rows: [] };
+  const history = ids.length ? await query('SELECT * FROM report_status_history WHERE report_id = ANY($1::uuid[]) ORDER BY created_at', [ids]) : { rows: [] };
+  res.json(
+    reports.rows.map((report: any) => ({
+      ...report,
+      comments: comments.rows.filter((comment: any) => comment.report_id === report.id),
+      history: history.rows.filter((item: any) => item.report_id === report.id)
+    }))
+  );
+}));
+
+app.patch('/api/admin/reports/:id', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+  const reportId = routeParam(req.params.id);
+  const body = reportAdminUpdateSchema.parse(req.body);
+  if (await preferMemory()) {
+    const report = memoryReports.find((item) => item.id === reportId);
+    if (!report) return res.status(404).json({ message: 'Report not found' });
+    const oldStatus = report.status;
+    report.status = body.status;
+    report.admin_remarks = body.adminRemarks || '';
+    report.assigned_admin_id = body.assignedAdminId || null;
+    report.moderation_action = body.moderationAction || 'None';
+    report.updated_at = new Date();
+    if (oldStatus !== report.status) {
+      memoryReportStatusHistory.push({ id: randomUUID(), report_id: report.id, changed_by: req.user!.id, old_status: oldStatus, new_status: report.status, note: body.adminRemarks || '', created_at: new Date() });
+      await createNotification({ title: 'Report Status Updated', message: `Your report "${report.title}" is now ${report.status}.`, target: 'Specific User', specificUserId: report.reporter_id, createdBy: req.user!.id, type: 'General', priority: report.status === 'Resolved' ? 'Medium' : 'High' });
+    }
+    if (body.adminRemarks) {
+      await createNotification({ title: 'Admin Added Report Remark', message: `Admin remarks added to your report: ${report.title}`, target: 'Specific User', specificUserId: report.reporter_id, createdBy: req.user!.id, type: 'General', priority: 'Medium' });
+    }
+    return res.json(reportView(report));
+  }
+  const current = await query('SELECT * FROM reports WHERE id=$1', [reportId]);
+  const report = current.rows[0];
+  if (!report) return res.status(404).json({ message: 'Report not found' });
+  const updated = await query(
+    `UPDATE reports
+     SET status=$1, admin_remarks=$2, assigned_admin_id=$3, moderation_action=$4, updated_at=now()
+     WHERE id=$5
+     RETURNING *`,
+    [body.status, body.adminRemarks || '', body.assignedAdminId || null, body.moderationAction || 'None', reportId]
+  );
+  if (report.status !== body.status) {
+    await query('INSERT INTO report_status_history (report_id,changed_by,old_status,new_status,note) VALUES ($1,$2,$3,$4,$5)', [reportId, req.user!.id, report.status, body.status, body.adminRemarks || '']);
+    await createNotification({ title: 'Report Status Updated', message: `Your report "${report.title}" is now ${body.status}.`, target: 'Specific User', specificUserId: report.reporter_id, createdBy: req.user!.id, type: 'General', priority: body.status === 'Resolved' ? 'Medium' : 'High' });
+  }
+  if (body.adminRemarks) {
+    await createNotification({ title: 'Admin Added Report Remark', message: `Admin remarks added to your report: ${report.title}`, target: 'Specific User', specificUserId: report.reporter_id, createdBy: req.user!.id, type: 'General', priority: 'Medium' });
+  }
+  res.json(updated.rows[0]);
+}));
+
+app.delete('/api/admin/reports/:id', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+  const reportId = routeParam(req.params.id);
+  if (await preferMemory()) {
+    const index = memoryReports.findIndex((report) => report.id === reportId);
+    if (index >= 0) memoryReports.splice(index, 1);
+    for (let i = memoryReportComments.length - 1; i >= 0; i -= 1) if (memoryReportComments[i].report_id === reportId) memoryReportComments.splice(i, 1);
+    for (let i = memoryReportStatusHistory.length - 1; i >= 0; i -= 1) if (memoryReportStatusHistory[i].report_id === reportId) memoryReportStatusHistory.splice(i, 1);
+    return res.status(204).end();
+  }
+  await query('DELETE FROM reports WHERE id=$1', [reportId]);
+  res.status(204).end();
 }));
 
 app.get('/api/notifications', requireAuth, asyncRoute(async (req, res) => {

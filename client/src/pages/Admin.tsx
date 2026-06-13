@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Bell, Download, Edit2, Plus, RefreshCcw, Send, Trash2 } from 'lucide-react';
+import { AlertTriangle, Bell, Download, Edit2, FileText, Plus, RefreshCcw, Send, Trash2 } from 'lucide-react';
 import { api, getUser } from '../lib/api';
 
 type StudentProgress = {
@@ -32,6 +32,31 @@ type AdminNotification = {
   readCount?: number;
 };
 
+type AdminReport = {
+  id: string;
+  reporter_id: string;
+  reporterName?: string;
+  reporterEmail?: string;
+  title: string;
+  category: string;
+  description: string;
+  related_module?: string | null;
+  related_question_id?: string | null;
+  reported_user_identifier?: string | null;
+  reportedUserName?: string | null;
+  priority: 'Low' | 'Medium' | 'High' | 'Urgent';
+  status: 'New' | 'Under Review' | 'Resolved' | 'Rejected';
+  admin_remarks?: string | null;
+  assigned_admin_id?: string | null;
+  assignedAdminName?: string | null;
+  moderation_action?: string;
+  attachment_url?: string | null;
+  attachment_name?: string | null;
+  created_at: string;
+  comments?: Array<{ id: string; comment: string; is_admin: boolean; authorName?: string; created_at: string }>;
+  history?: Array<{ id: string; old_status?: string | null; new_status: string; note?: string | null; created_at: string }>;
+};
+
 const emptyNotification = {
   title: '',
   message: '',
@@ -49,6 +74,12 @@ export default function Admin() {
   const [questions, setQuestions] = useState<any[]>([]);
   const [report, setReport] = useState<StudentProgress[]>([]);
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [adminReports, setAdminReports] = useState<AdminReport[]>([]);
+  const [reportFilters, setReportFilters] = useState({ status: '', category: '', priority: '', user: '', date: '' });
+  const [selectedReportId, setSelectedReportId] = useState('');
+  const [reportError, setReportError] = useState('');
+  const [reportSavingId, setReportSavingId] = useState('');
+  const [reportDraft, setReportDraft] = useState({ admin_remarks: '', assigned_admin_id: '', moderation_action: 'None' });
   const [editingNotificationId, setEditingNotificationId] = useState('');
   const [notificationError, setNotificationError] = useState('');
   const [notificationForm, setNotificationForm] = useState(emptyNotification);
@@ -76,11 +107,23 @@ export default function Admin() {
     api<AdminNotification[]>('/admin/notifications').then(setNotifications).catch(() => {});
   }
 
+  function loadAdminReports() {
+    const qs = new URLSearchParams(reportFilters).toString();
+    api<AdminReport[]>(`/admin/reports?${qs}`).then((rows) => {
+      setAdminReports(rows);
+      if (!selectedReportId && rows[0]) setSelectedReportId(rows[0].id);
+    }).catch((err) => setReportError(err instanceof Error ? err.message : 'Could not load reports.'));
+  }
+
   useEffect(() => {
     loadQuestions();
     loadProgress();
     loadNotifications();
   }, []);
+
+  useEffect(() => {
+    loadAdminReports();
+  }, [reportFilters]);
 
   if (user?.role !== 'admin') return <div className="panel p-6">Admin access is required.</div>;
 
@@ -139,6 +182,38 @@ export default function Admin() {
   }
 
   const students = report.filter((row) => row.role === 'student');
+  const admins = report.filter((row) => row.role === 'admin');
+  const selectedReport = adminReports.find((item) => item.id === selectedReportId) || adminReports[0];
+
+  useEffect(() => {
+    if (!selectedReport) return;
+    setReportDraft({
+      admin_remarks: selectedReport.admin_remarks || '',
+      assigned_admin_id: selectedReport.assigned_admin_id || '',
+      moderation_action: selectedReport.moderation_action || 'None'
+    });
+  }, [selectedReport?.id]);
+
+  async function updateAdminReport(item: AdminReport, updates: Partial<AdminReport>) {
+    setReportSavingId(item.id);
+    setReportError('');
+    try {
+      await api(`/admin/reports/${item.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: updates.status || item.status,
+          adminRemarks: updates.admin_remarks ?? item.admin_remarks ?? '',
+          assignedAdminId: updates.assigned_admin_id ?? item.assigned_admin_id ?? '',
+          moderationAction: updates.moderation_action || item.moderation_action || 'None'
+        })
+      });
+      loadAdminReports();
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Could not update report.');
+    } finally {
+      setReportSavingId('');
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -194,6 +269,130 @@ export default function Admin() {
             </div>
           ))}
           {!students.length && <div className="p-4 text-sm text-slate-500">No student activity yet. Student accounts will appear here after sign-up.</div>}
+        </div>
+      </section>
+
+      <section className="panel overflow-hidden">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <div className="flex items-center gap-2 font-bold"><AlertTriangle size={18} /> Reports</div>
+          <div className="text-sm text-slate-500">Review bugs, feedback, abuse reports, wrong test cases, and account issues.</div>
+        </div>
+        <div className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-5">
+          <select className="input" value={reportFilters.status} onChange={(event) => setReportFilters({ ...reportFilters, status: event.target.value })}>
+            <option value="">All status</option><option>New</option><option>Under Review</option><option>Resolved</option><option>Rejected</option>
+          </select>
+          <select className="input" value={reportFilters.category} onChange={(event) => setReportFilters({ ...reportFilters, category: event.target.value })}>
+            <option value="">All categories</option>
+            {['Technical Bug', 'App Glitch', 'Question/Test Problem', 'Wrong Test Case or Output', 'Abusive Language', 'Misbehavior', 'Group/Chat Issue', 'Account/Login Issue', 'Suggestion', 'General Feedback'].map((category) => <option key={category}>{category}</option>)}
+          </select>
+          <select className="input" value={reportFilters.priority} onChange={(event) => setReportFilters({ ...reportFilters, priority: event.target.value })}>
+            <option value="">All priority</option><option>Low</option><option>Medium</option><option>High</option><option>Urgent</option>
+          </select>
+          <input className="input" placeholder="Search user" value={reportFilters.user} onChange={(event) => setReportFilters({ ...reportFilters, user: event.target.value })} />
+          <input className="input" type="date" value={reportFilters.date} onChange={(event) => setReportFilters({ ...reportFilters, date: event.target.value })} />
+        </div>
+        {reportError && <div className="border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">{reportError}</div>}
+        <div className="grid min-h-[460px] lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="border-r border-slate-200">
+            {adminReports.length === 0 && <div className="p-6 text-center text-sm text-slate-500">No reports found.</div>}
+            <div className="divide-y divide-slate-100">
+              {adminReports.map((item) => (
+                <button key={item.id} type="button" onClick={() => setSelectedReportId(item.id)} className={`block w-full p-4 text-left hover:bg-slate-50 ${selectedReport?.id === item.id ? 'bg-blue-50' : ''} ${item.priority === 'Urgent' ? 'border-l-4 border-l-red-500' : ''}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-semibold">{item.title}</div>
+                    <span className={`rounded px-2 py-0.5 text-xs font-bold ${item.status === 'Resolved' ? 'bg-emerald-50 text-emerald-700' : item.status === 'Under Review' ? 'bg-blue-100 text-brand' : item.status === 'Rejected' ? 'bg-slate-100 text-slate-600' : 'bg-amber-50 text-amber-700'}`}>{item.status}</span>
+                    <span className={`rounded px-2 py-0.5 text-xs font-bold ${item.priority === 'Urgent' ? 'bg-red-100 text-red-700' : item.priority === 'High' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600'}`}>{item.priority}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">{item.category} · {item.reporterName || 'User'}</div>
+                  <div className="mt-1 text-xs text-slate-400">{new Date(item.created_at).toLocaleString()}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="p-5">
+            {selectedReport ? (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold">{selectedReport.title}</h2>
+                    <div className="mt-1 text-sm text-slate-500">{selectedReport.category} · {selectedReport.priority} priority</div>
+                  </div>
+                  <select className="input w-auto" value={selectedReport.status} onChange={(event) => updateAdminReport(selectedReport, { status: event.target.value as AdminReport['status'] })}>
+                    <option>New</option><option>Under Review</option><option>Resolved</option><option>Rejected</option>
+                  </select>
+                </div>
+                <div className="grid gap-3 text-sm md:grid-cols-2">
+                  <div className="rounded-md bg-slate-50 p-3">
+                    <b>Reporter</b>
+                    <div>{selectedReport.reporterName || 'Unknown user'}</div>
+                    <div className="text-slate-500">{selectedReport.reporterEmail}</div>
+                  </div>
+                  <div className="rounded-md bg-slate-50 p-3">
+                    <b>Related</b>
+                    <div>{selectedReport.related_module || 'No module/page'}</div>
+                    <div className="text-slate-500">Question: {selectedReport.related_question_id || 'Not provided'}</div>
+                  </div>
+                  <div className="rounded-md bg-slate-50 p-3 md:col-span-2">
+                    <b>Reported user details</b>
+                    <div>{selectedReport.reported_user_identifier || selectedReport.reportedUserName || 'Not applicable'}</div>
+                    <div className="text-slate-500">Reporter identity is not shown to the reported user.</div>
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1 text-sm font-bold">Description</div>
+                  <div className="whitespace-pre-line rounded-md border border-slate-200 p-3 text-sm text-slate-700">{selectedReport.description}</div>
+                </div>
+                {selectedReport.attachment_url && (
+                  <a className="btn btn-soft" href={selectedReport.attachment_url} target="_blank" rel="noreferrer">
+                    <FileText size={16} />
+                    {selectedReport.attachment_name || 'Open attachment'}
+                  </a>
+                )}
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1 block text-sm font-bold">Assign to admin/moderator</span>
+                    <select className="input" value={reportDraft.assigned_admin_id} onChange={(event) => setReportDraft({ ...reportDraft, assigned_admin_id: event.target.value })}>
+                      <option value="">Unassigned</option>
+                      {admins.map((admin) => <option key={admin.id} value={admin.id}>{admin.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-sm font-bold">Moderation action</span>
+                    <select className="input" value={reportDraft.moderation_action} onChange={(event) => setReportDraft({ ...reportDraft, moderation_action: event.target.value })}>
+                      <option>None</option><option>Warning Placeholder</option><option>Suspend Placeholder</option><option>Ban Placeholder</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-bold">Admin remarks</span>
+                  <textarea className="input min-h-24" value={reportDraft.admin_remarks} onChange={(event) => setReportDraft({ ...reportDraft, admin_remarks: event.target.value })} />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-primary" disabled={reportSavingId === selectedReport.id} onClick={() => updateAdminReport(selectedReport, reportDraft as Partial<AdminReport>)}>
+                    <Send size={16} />
+                    {reportSavingId === selectedReport.id ? 'Saving...' : 'Save Report'}
+                  </button>
+                  <button className="btn btn-soft" onClick={async () => { await api(`/admin/reports/${selectedReport.id}`, { method: 'DELETE' }); setSelectedReportId(''); loadAdminReports(); }}>
+                    <Trash2 size={16} />
+                    Delete Spam/False Report
+                  </button>
+                </div>
+                <div>
+                  <div className="mb-2 text-sm font-bold">Comments & Follow-ups</div>
+                  <div className="space-y-2">
+                    {(selectedReport.comments || []).length === 0 && <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-500">No follow-up comments yet.</div>}
+                    {(selectedReport.comments || []).map((comment) => (
+                      <div key={comment.id} className={`rounded-md p-3 text-sm ${comment.is_admin ? 'bg-blue-50 text-brand' : 'bg-slate-50 text-slate-700'}`}>
+                        <b>{comment.is_admin ? 'Admin' : comment.authorName || 'User'}:</b> {comment.comment}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid h-full place-items-center text-sm text-slate-500">Select a report to view details.</div>
+            )}
+          </div>
         </div>
       </section>
 

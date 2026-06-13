@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, Sparkles, Timer } from 'lucide-react';
+import { BookOpen, LifeBuoy, Sparkles, Timer } from 'lucide-react';
 import Metric from '../components/Metric';
 import { api, getUser } from '../lib/api';
 
@@ -21,6 +21,7 @@ export default function Dashboard() {
           <div className="mt-5 flex flex-wrap gap-3">
             <Link className="btn btn-primary" to="/questions"><BookOpen size={16} /> Start Practice</Link>
             <Link className="btn btn-soft" to="/mock-tests"><Timer size={16} /> Take Mock Test</Link>
+            <Link className="btn btn-soft" to="/reports"><LifeBuoy size={16} /> Report / Feedback</Link>
           </div>
         </div>
         <div className="panel p-6">

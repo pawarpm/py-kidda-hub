@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Award, BarChart3, Bell, Code2, Info, LayoutDashboard, Loader2, Lock, LogOut, MessageSquareText, Search, Settings, Shield, UserRound, Users, X, Trophy, Timer } from 'lucide-react';
+import { Award, BarChart3, Bell, Code2, Info, LayoutDashboard, LifeBuoy, Loader2, Lock, LogOut, MessageSquareText, Search, Settings, Shield, UserRound, Users, X, Trophy, Timer } from 'lucide-react';
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, clearSession, getToken, getUser } from '../lib/api';
 import { NotificationItem, priorityClass } from '../pages/Notifications';
@@ -11,7 +11,8 @@ const nav = [
   { to: '/friends', label: 'Friends', icon: Users },
   { to: '/groups', label: 'Groups', icon: MessageSquareText },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
-  { to: '/leaderboard', label: 'Leaderboard', icon: Trophy }
+  { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
+  { to: '/reports', label: 'Report / Feedback', icon: LifeBuoy }
 ];
 
 type StudentSearchResult = {
@@ -371,6 +372,10 @@ export default function AppShell() {
                 <span className="hidden sm:inline">Edit Profile</span>
               </button>
             )}
+            <button className="btn btn-soft" type="button" onClick={() => navigate('/reports')}>
+              <LifeBuoy size={16} />
+              <span className="hidden sm:inline">Report</span>
+            </button>
             <button
               className="btn btn-soft"
               onClick={async () => {
