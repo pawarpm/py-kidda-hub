@@ -359,15 +359,20 @@ function notificationReadCount(notificationId: string) {
   return memoryNotificationReads.filter((item) => item.notification_id === notificationId && item.read_at).length;
 }
 
-function seedNotifications() {
-  if (memoryNotifications.length) return;
-  const admin = memoryUsers.find((user) => user.role === 'admin') || memoryUsers[0];
-  const samples = [
+function defaultNotifications() {
+  return [
     { title: 'Welcome to Py Kidda Hub', message: 'Welcome to PY Kidda Hub(PKH). Start practicing Python and track your progress.', type: 'Announcement' as const, priority: 'High' as const },
     { title: 'New Python Practice Tests Added', message: 'Fresh Python practice tests are now available in the question bank and mock test sections.', type: 'Feature Update' as const, priority: 'Medium' as const },
-    { title: 'Progress Tracking Feature Updated', message: 'Student dashboards now show improved progress and activity tracking.', type: 'App Change' as const, priority: 'Medium' as const }
+    { title: 'Progress Tracking Feature Updated', message: 'Student dashboards now show improved progress and activity tracking.', type: 'App Change' as const, priority: 'Medium' as const },
+    { title: 'Friends and Groups Feature Added', message: 'You can now add friends, send private messages, create study groups, and discuss Python doubts with classmates.', type: 'Feature Update' as const, priority: 'High' as const },
+    { title: 'Notification Center Added', message: 'A new bell icon now shows announcements, feature updates, maintenance messages, and important app changes for every user.', type: 'Feature Update' as const, priority: 'High' as const }
   ];
-  for (const sample of samples) {
+}
+
+function seedNotifications() {
+  const admin = memoryUsers.find((user) => user.role === 'admin') || memoryUsers[0];
+  for (const sample of defaultNotifications()) {
+    if (memoryNotifications.some((notification) => notification.title === sample.title)) continue;
     memoryNotifications.push({
       id: randomUUID(),
       ...sample,
@@ -380,6 +385,20 @@ function seedNotifications() {
       created_at: new Date(),
       updated_at: new Date()
     });
+  }
+}
+
+async function ensureDefaultNotifications() {
+  const admin = await query("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1");
+  const adminId = admin.rows[0]?.id;
+  if (!adminId) return;
+  for (const sample of defaultNotifications()) {
+    await query(
+      `INSERT INTO notifications (title,message,type,priority,target,publish_at,status,created_by)
+       SELECT $1,$2,$3,$4,'All Users',now(),'Published',$5
+       WHERE NOT EXISTS (SELECT 1 FROM notifications WHERE title=$1)`,
+      [sample.title, sample.message, sample.type, sample.priority, adminId]
+    );
   }
 }
 
@@ -1467,6 +1486,7 @@ app.get('/api/notifications', requireAuth, asyncRoute(async (req, res) => {
       .sort((a, b) => new Date(b.publish_at).getTime() - new Date(a.publish_at).getTime());
     return res.json({ notifications: rows, unreadCount: rows.filter((row) => !row.isRead).length });
   }
+  await ensureDefaultNotifications();
   const result = await query(
     `SELECT n.*,
             u.name AS "createdByName",
@@ -1540,6 +1560,7 @@ app.get('/api/admin/notifications', requireAuth, requireAdmin, asyncRoute(async 
         .sort((a, b) => b.created_at.getTime() - a.created_at.getTime())
     );
   }
+  await ensureDefaultNotifications();
   const result = await query(
     `SELECT n.*, u.name AS "createdByName", count(ns.read_at)::int AS "readCount"
      FROM notifications n
