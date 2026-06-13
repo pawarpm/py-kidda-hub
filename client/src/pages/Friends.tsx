@@ -117,8 +117,8 @@ export default function Friends() {
     <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
       <section className="space-y-5">
         <div className="panel p-5">
-          <h1 className="text-2xl font-bold tracking-normal">Friends</h1>
-          <p className="mt-1 text-sm text-slate-600">Find classmates, send requests, and chat privately after becoming friends.</p>
+          <h1 className="text-2xl font-bold tracking-normal">Add Friends</h1>
+          <p className="mt-1 text-sm text-slate-600">Search classmates by name, send friend requests, and chat privately after becoming friends.</p>
           <div className="mt-4 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
             <Search size={17} className="text-slate-400" />
             <input className="w-full bg-transparent text-sm outline-none" placeholder="Search students by name" value={query} onChange={(event) => setQuery(event.target.value)} />
