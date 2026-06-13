@@ -767,7 +767,7 @@ type GoogleProfile = {
 async function verifyGoogleCredential(credential: string): Promise<GoogleProfile> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
-    throw new Error('Google sign-in is not configured. Add GOOGLE_CLIENT_ID to server/.env and VITE_GOOGLE_CLIENT_ID to client/.env.');
+    throw new Error('Google sign-in is not configured. Add GOOGLE_CLIENT_ID to server/.env locally or to Cloud Run environment variables.');
   }
   const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
   if (!response.ok) {
