@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Award, BarChart3, Bell, Code2, Info, LayoutDashboard, LifeBuoy, Loader2, Lock, LogOut, MessageSquareText, Search, Settings, Shield, UserRound, Users, X, Trophy, Timer } from 'lucide-react';
+import { Award, BarChart3, Bell, Code2, Info, LayoutDashboard, LifeBuoy, Loader2, Lock, LogOut, MessageSquareText, Moon, Search, Settings, Shield, Sun, UserRound, Users, X, Trophy, Timer } from 'lucide-react';
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, clearSession, getToken, getUser } from '../lib/api';
 import { NotificationItem, priorityClass } from '../pages/Notifications';
@@ -37,6 +37,10 @@ function statusClasses(status?: string) {
   return 'bg-slate-400 text-slate-500';
 }
 
+function profilePromptKey(userId?: string) {
+  return userId ? `pkh-profile-create-shown:${userId}` : '';
+}
+
 export default function AppShell() {
   const user = getUser();
   const [showCreditsInfo, setShowCreditsInfo] = useState(false);
@@ -49,8 +53,14 @@ export default function AppShell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
   const [toast, setToast] = useState<NotificationItem | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (document.documentElement.classList.contains('dark') ? 'dark' : 'light'));
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem('pkh-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!user || user.role === 'admin') {
@@ -62,7 +72,12 @@ export default function AppShell() {
       .then((result) => {
         if (!active) return;
         setProfileCheck({ loading: false, exists: result.exists, profile: result.profile });
-        if (!result.exists && location.pathname !== '/profile/create') navigate('/profile/create', { replace: true });
+        const promptKey = profilePromptKey(user.id);
+        const alreadyShown = promptKey ? localStorage.getItem(promptKey) === 'true' : true;
+        if (!result.exists && !alreadyShown && location.pathname !== '/profile/create') {
+          localStorage.setItem(promptKey, 'true');
+          navigate('/profile/create', { replace: true });
+        }
       })
       .catch(() => {
         if (active) setProfileCheck({ loading: false, exists: true, profile: null });
@@ -339,6 +354,16 @@ export default function AppShell() {
             </div>
           )}
           <div className="flex shrink-0 items-center gap-2 self-end lg:self-auto">
+            <button
+              className="btn btn-soft"
+              type="button"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              <span className="hidden sm:inline">{theme === 'dark' ? 'Light' : 'Dark'}</span>
+            </button>
             <div className="relative">
               <button className="btn btn-soft relative" type="button" onClick={() => setShowNotifications(!showNotifications)} aria-label="Notifications">
                 <Bell size={16} />
