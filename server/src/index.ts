@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import { query } from './db.js';
 import { requireAdmin, requireAuth, signToken } from './auth.js';
 import { executePython, normalizeOutput } from './executor.js';
+import { getQuestionHelp } from './questionHelp.js';
 import { buildQuestionSeed } from './questions.js';
 
 const app = express();
@@ -27,6 +28,9 @@ type MemoryUser = {
   avatar_url?: string;
   role: 'student' | 'admin';
   college: string;
+  email_verified: boolean;
+  last_login_at?: Date | null;
+  account_status: 'active' | 'suspended' | 'banned';
   status: 'online' | 'idle' | 'offline';
   last_active_at?: Date | null;
 };
@@ -54,6 +58,9 @@ const memoryUsers: MemoryUser[] = [
     auth_provider: 'password',
     college: 'Demo Engineering College',
     role: 'student',
+    email_verified: true,
+    last_login_at: null,
+    account_status: 'active',
     status: 'offline',
     last_active_at: null
   },
@@ -65,6 +72,9 @@ const memoryUsers: MemoryUser[] = [
     auth_provider: 'password',
     college: 'Demo Engineering College',
     role: 'admin',
+    email_verified: true,
+    last_login_at: null,
+    account_status: 'active',
     status: 'offline',
     last_active_at: null
   }
@@ -118,6 +128,19 @@ type MemoryNotification = {
 };
 const memoryNotificationReads: Array<{ notification_id: string; user_id: string; read_at?: Date | null; cleared_at?: Date | null }> = [];
 const memoryNotifications: MemoryNotification[] = [];
+const memoryOtps: Array<{
+  id: string;
+  user_id?: string | null;
+  email: string;
+  purpose: 'email_verification' | 'password_reset';
+  code_hash: string;
+  expires_at: Date;
+  attempts: number;
+  max_attempts: number;
+  used_at?: Date | null;
+  created_at: Date;
+}> = [];
+const memoryOtpRequestLog = new Map<string, number[]>();
 const reportCategories = [
   'Technical Bug',
   'App Glitch',
@@ -201,7 +224,105 @@ const memoryQuestions = buildQuestionSeed().map(createMemoryQuestion);
 const uploadDir = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
 
 function publicUser(user: MemoryUser) {
-  return { id: user.id, name: user.name, email: user.email, role: user.role, college: user.college, avatar_url: user.avatar_url || null, status: currentStatus(user), last_active_at: user.last_active_at || null };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    college: user.college,
+    avatar_url: user.avatar_url || null,
+    status: currentStatus(user),
+    last_active_at: user.last_active_at || null,
+    authProvider: user.auth_provider,
+    emailVerified: user.email_verified,
+    lastLogin: user.last_login_at || null,
+    accountStatus: user.account_status
+  };
+}
+
+function validatePasswordStrength(password: string) {
+  if (password.length < 8) throw new Error('Password must be at least 8 characters.');
+  if (!/[A-Z]/.test(password)) throw new Error('Password must contain one uppercase letter.');
+  if (!/[a-z]/.test(password)) throw new Error('Password must contain one lowercase letter.');
+  if (!/\d/.test(password)) throw new Error('Password must contain one number.');
+}
+
+function createOtpCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function sendAuthEmail(email: string, subject: string, message: string) {
+  // In production, connect this hook to Gmail SMTP/SendGrid/Mailgun using server-only env vars.
+  // Never send mail provider secrets to the frontend.
+  if (!process.env.SMTP_HOST && !process.env.GMAIL_USER) {
+    console.log(`[AUTH EMAIL: ${email}] ${subject}\n${message}`);
+    return;
+  }
+  console.log(`[AUTH EMAIL QUEUED: ${email}] ${subject}`);
+}
+
+async function enforceOtpRateLimit(email: string, purpose: 'email_verification' | 'password_reset') {
+  const key = `${email}:${purpose}`;
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  if (await preferMemory()) {
+    const recent = (memoryOtpRequestLog.get(key) || []).filter((time) => now - time < windowMs);
+    if (recent.length >= 3) throw new Error('Too many OTP requests. Please wait before trying again.');
+    recent.push(now);
+    memoryOtpRequestLog.set(key, recent);
+    return;
+  }
+  const count = await query<{ count: string }>(
+    `SELECT count(*) FROM auth_otps WHERE email=$1 AND purpose=$2 AND created_at > now() - interval '10 minutes'`,
+    [email, purpose]
+  );
+  if (Number(count.rows[0].count) >= 3) throw new Error('Too many OTP requests. Please wait before trying again.');
+}
+
+async function issueOtp(userId: string | null, email: string, purpose: 'email_verification' | 'password_reset') {
+  await enforceOtpRateLimit(email, purpose);
+  const code = createOtpCode();
+  const codeHash = await bcrypt.hash(code, 10);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  if (await preferMemory()) {
+    memoryOtps.push({ id: randomUUID(), user_id: userId, email, purpose, code_hash: codeHash, expires_at: expiresAt, attempts: 0, max_attempts: 5, used_at: null, created_at: new Date() });
+  } else {
+    await query(
+      `INSERT INTO auth_otps (user_id,email,purpose,code_hash,expires_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [userId, email, purpose, codeHash, expiresAt]
+    );
+  }
+  const label = purpose === 'password_reset' ? 'reset your password' : 'verify your email';
+  await sendAuthEmail(email, `Py Kidda Hub OTP: ${code}`, `Use OTP ${code} to ${label}. This code expires in 10 minutes.`);
+  return process.env.NODE_ENV === 'production' ? undefined : code;
+}
+
+async function verifyOtp(email: string, purpose: 'email_verification' | 'password_reset', code: string) {
+  const now = new Date();
+  if (await preferMemory()) {
+    const otp = [...memoryOtps].reverse().find((item) => item.email === email && item.purpose === purpose && !item.used_at);
+    if (!otp) throw new Error('Invalid or expired verification code.');
+    if (otp.expires_at < now) throw new Error('Invalid or expired verification code.');
+    if (otp.attempts >= otp.max_attempts) throw new Error('Too many wrong OTP attempts.');
+    otp.attempts += 1;
+    if (!(await bcrypt.compare(code, otp.code_hash))) throw new Error('Wrong verification code.');
+    otp.used_at = now;
+    return otp;
+  }
+  const result = await query(
+    `SELECT * FROM auth_otps
+     WHERE email=$1 AND purpose=$2 AND used_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [email, purpose]
+  );
+  const otp = result.rows[0];
+  if (!otp || new Date(otp.expires_at) < now) throw new Error('Invalid or expired verification code.');
+  if (Number(otp.attempts) >= Number(otp.max_attempts)) throw new Error('Too many wrong OTP attempts.');
+  await query('UPDATE auth_otps SET attempts=attempts+1 WHERE id=$1', [otp.id]);
+  if (!(await bcrypt.compare(code, otp.code_hash))) throw new Error('Wrong verification code.');
+  await query('UPDATE auth_otps SET used_at=now() WHERE id=$1', [otp.id]);
+  return otp;
 }
 
 const profileSchema = z.object({
@@ -742,13 +863,33 @@ app.post('/api/auth/google', asyncRoute(async (req, res) => {
         avatar_url: profile.picture,
         college: body.college || 'Demo Engineering College',
         role: 'student',
+        email_verified: true,
+        last_login_at: new Date(),
+        account_status: 'active',
         status: 'online',
         last_active_at: new Date()
       };
       memoryUsers.push(user);
     }
+    if (!memoryStudentProfiles.has(user.id)) {
+      memoryStudentProfiles.set(user.id, {
+        user_id: user.id,
+        full_name: user.name,
+        profile_picture_url: user.avatar_url || null,
+        basic_info: 'Google account student profile',
+        bio: '',
+        phone: '',
+        location: '',
+        date_of_birth: null,
+        gender: null,
+        is_progress_public: false
+      });
+    }
     user.status = 'online';
     user.last_active_at = new Date();
+    user.last_login_at = new Date();
+    user.email_verified = true;
+    user.account_status = 'active';
     const tokenUser = publicUser(user);
     return res.status(201).json({ token: signToken(tokenUser), user: tokenUser });
   }
@@ -757,46 +898,75 @@ app.post('/api/auth/google', asyncRoute(async (req, res) => {
   if (existing.rows[0]) {
     const updated = await query(
       `UPDATE users
-       SET name=$1, email=$2, auth_provider='google', google_sub=$3, avatar_url=$4, status='online', last_active_at=now()
+       SET name=$1, email=$2, auth_provider='google', google_sub=$3, avatar_url=$4,
+           email_verified=true, account_status='active', status='online', last_active_at=now(), last_login_at=now()
        WHERE id=$5
-       RETURNING id,name,email,role,college,avatar_url,status,last_active_at`,
+       RETURNING id,name,email,role,college,avatar_url,status,last_active_at,auth_provider AS "authProvider",email_verified AS "emailVerified",last_login_at AS "lastLogin",account_status AS "accountStatus"`,
       [profile.name, email, profile.sub, profile.picture || null, existing.rows[0].id]
     );
     const user = updated.rows[0];
+    await query(
+      `INSERT INTO student_profiles (user_id, full_name, profile_picture_url, basic_info)
+       VALUES ($1,$2,$3,'Google account student profile')
+       ON CONFLICT (user_id) DO NOTHING`,
+      [user.id, user.name, user.avatar_url || null]
+    );
     return res.json({ token: signToken(user), user });
   }
 
   const inserted = await query(
-    `INSERT INTO users (name, email, auth_provider, google_sub, avatar_url, college)
-     VALUES ($1,$2,'google',$3,$4,$5)
-     RETURNING id,name,email,role,college,avatar_url,status,last_active_at`,
+    `INSERT INTO users (name, email, auth_provider, google_sub, avatar_url, college, email_verified, account_status, status, last_active_at, last_login_at)
+     VALUES ($1,$2,'google',$3,$4,$5,true,'active','online',now(),now())
+     RETURNING id,name,email,role,college,avatar_url,status,last_active_at,auth_provider AS "authProvider",email_verified AS "emailVerified",last_login_at AS "lastLogin",account_status AS "accountStatus"`,
     [profile.name, email, profile.sub, profile.picture || null, body.college || 'Demo Engineering College']
   );
   const user = inserted.rows[0];
+  await query(
+    `INSERT INTO student_profiles (user_id, full_name, profile_picture_url, basic_info)
+     VALUES ($1,$2,$3,'Google account student profile')
+     ON CONFLICT (user_id) DO NOTHING`,
+    [user.id, user.name, user.avatar_url || null]
+  );
   res.status(201).json({ token: signToken(user), user });
 }));
 
 app.post('/api/auth/register', asyncRoute(async (req, res) => {
   const body = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), college: z.string().min(2) }).parse(req.body);
+  validatePasswordStrength(body.password);
   const passwordHash = await bcrypt.hash(body.password, 10);
   if (await preferMemory()) {
     const email = body.email.toLowerCase();
     if (memoryUsers.some((user) => user.email === email)) {
       return res.status(409).json({ message: 'Email is already registered' });
     }
-    const user: MemoryUser = { id: randomUUID(), name: body.name, email, password_hash: passwordHash, auth_provider: 'password', college: body.college, role: 'student', status: 'online', last_active_at: new Date() };
+    const user: MemoryUser = {
+      id: randomUUID(),
+      name: body.name,
+      email,
+      password_hash: passwordHash,
+      auth_provider: 'password',
+      college: body.college,
+      role: 'student',
+      email_verified: false,
+      last_login_at: new Date(),
+      account_status: 'active',
+      status: 'online',
+      last_active_at: new Date()
+    };
     memoryUsers.push(user);
+    const devCode = await issueOtp(user.id, email, 'email_verification');
     const tokenUser = publicUser(user);
-    return res.status(201).json({ token: signToken(tokenUser), user: tokenUser });
+    return res.status(201).json({ token: signToken(tokenUser), user: tokenUser, message: 'Account created. Verification OTP sent to your email.', devCode });
   }
   const result = await query(
-    `INSERT INTO users (name, email, password_hash, college, status, last_active_at)
-     VALUES ($1,$2,$3,$4,'online',now())
-     RETURNING id,name,email,role,college,avatar_url,status,last_active_at`,
+    `INSERT INTO users (name, email, password_hash, college, auth_provider, email_verified, account_status, status, last_active_at, last_login_at)
+     VALUES ($1,$2,$3,$4,'password',false,'active','online',now(),now())
+     RETURNING id,name,email,role,college,avatar_url,status,last_active_at,auth_provider AS "authProvider",email_verified AS "emailVerified",last_login_at AS "lastLogin",account_status AS "accountStatus"`,
     [body.name, body.email.toLowerCase(), passwordHash, body.college]
   );
   const user = result.rows[0];
-  res.status(201).json({ token: signToken(user), user });
+  const devCode = await issueOtp(user.id, user.email, 'email_verification');
+  res.status(201).json({ token: signToken(user), user, message: 'Account created. Verification OTP sent to your email.', devCode });
 }));
 
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
@@ -806,8 +976,10 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
     if (!user || !user.password_hash || !(await bcrypt.compare(body.password, user.password_hash))) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
+    if (user.account_status !== 'active') return res.status(403).json({ message: 'This account is not active.' });
     user.status = 'online';
     user.last_active_at = new Date();
+    user.last_login_at = new Date();
     const tokenUser = publicUser(user);
     return res.json({ token: signToken(tokenUser), user: tokenUser });
   }
@@ -816,14 +988,69 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
   if (!user || !(await bcrypt.compare(body.password, user.password_hash))) {
     return res.status(401).json({ message: 'Invalid email or password' });
   }
-  const updated = await query('UPDATE users SET status=$1, last_active_at=now() WHERE id=$2 RETURNING id,name,email,role,college,avatar_url,status,last_active_at', ['online', user.id]);
+  if (user.account_status !== 'active') return res.status(403).json({ message: 'This account is not active.' });
+  const updated = await query(
+    `UPDATE users SET status=$1, last_active_at=now(), last_login_at=now()
+     WHERE id=$2
+     RETURNING id,name,email,role,college,avatar_url,status,last_active_at,auth_provider AS "authProvider",email_verified AS "emailVerified",last_login_at AS "lastLogin",account_status AS "accountStatus"`,
+    ['online', user.id]
+  );
   const tokenUser = updated.rows[0];
   res.json({ token: signToken(tokenUser), user: tokenUser });
 }));
 
-app.post('/api/auth/forgot-password', (_req, res) => {
-  res.json({ message: 'If the email exists, a password reset link will be sent by the configured mail service.' });
-});
+app.post('/api/auth/forgot-password', asyncRoute(async (req, res) => {
+  const body = z.object({ email: z.string().email() }).parse(req.body);
+  const email = body.email.toLowerCase();
+  if (await preferMemory()) {
+    const user = memoryUsers.find((item) => item.email === email);
+    if (!user) return res.status(404).json({ message: 'Email not found.' });
+    const devCode = await issueOtp(user.id, email, 'password_reset');
+    return res.json({ message: 'Password reset verification code sent successfully.', devCode });
+  }
+  const user = await query('SELECT id,email FROM users WHERE email=$1', [email]);
+  if (!user.rows[0]) return res.status(404).json({ message: 'Email not found.' });
+  const devCode = await issueOtp(user.rows[0].id, email, 'password_reset');
+  res.json({ message: 'Password reset verification code sent successfully.', devCode });
+}));
+
+app.post('/api/auth/verify-otp', asyncRoute(async (req, res) => {
+  const body = z.object({ email: z.string().email(), code: z.string().regex(/^\d{6}$/), purpose: z.enum(['email_verification', 'password_reset']) }).parse(req.body);
+  const email = body.email.toLowerCase();
+  const otp = await verifyOtp(email, body.purpose, body.code);
+  if (body.purpose === 'email_verification') {
+    if (await preferMemory()) {
+      const user = memoryUsers.find((item) => item.id === otp.user_id || item.email === email);
+      if (user) user.email_verified = true;
+    } else {
+      await query('UPDATE users SET email_verified=true WHERE email=$1', [email]);
+    }
+  }
+  res.json({ message: body.purpose === 'password_reset' ? 'Verification successful. You can reset your password now.' : 'Email verified successfully.' });
+}));
+
+app.post('/api/auth/reset-password', asyncRoute(async (req, res) => {
+  const body = z.object({
+    email: z.string().email(),
+    code: z.string().regex(/^\d{6}$/),
+    newPassword: z.string().min(8),
+    confirmPassword: z.string().min(8)
+  }).parse(req.body);
+  if (body.newPassword !== body.confirmPassword) throw new Error('Passwords do not match.');
+  validatePasswordStrength(body.newPassword);
+  const email = body.email.toLowerCase();
+  await verifyOtp(email, 'password_reset', body.code);
+  const passwordHash = await bcrypt.hash(body.newPassword, 10);
+  if (await preferMemory()) {
+    const user = memoryUsers.find((item) => item.email === email);
+    if (!user) return res.status(404).json({ message: 'Email not found.' });
+    user.password_hash = passwordHash;
+    user.auth_provider = user.auth_provider === 'google' ? 'google' : 'password';
+    return res.json({ message: 'Password reset successfully. Please login again.' });
+  }
+  await query('UPDATE users SET password_hash=$1 WHERE email=$2', [passwordHash, email]);
+  res.json({ message: 'Password reset successfully. Please login again.' });
+}));
 
 app.get('/api/profile', requireAuth, asyncRoute(async (req, res) => {
   if (await preferMemory()) {
@@ -1541,6 +1768,33 @@ app.post('/api/submit', requireAuth, asyncRoute(async (req, res) => {
   res.json({ status, score, results });
 }));
 
+app.get('/api/questions/:id/help', requireAuth, asyncRoute(async (req, res) => {
+  const questionId = routeParam(req.params.id);
+  if (await preferMemory()) {
+    const question = memoryQuestions.find((item) => item.id === questionId);
+    if (!question) return res.status(404).json({ message: 'Question not found' });
+    const latest = [...memorySubmissions]
+      .filter((submission) => submission.user_id === req.user!.id && submission.question_id === questionId)
+      .sort((a, b) => b.created_at.getTime() - a.created_at.getTime())[0];
+    if (!latest) return res.status(403).json({ message: 'Submit your answer first, then help will unlock.' });
+    if (latest.score === 100) return res.status(403).json({ message: 'You already solved this question correctly.' });
+    return res.json(getQuestionHelp(question.title));
+  }
+
+  const questionResult = await query('SELECT id,title,solution_code FROM questions WHERE id=$1', [questionId]);
+  const question = questionResult.rows[0];
+  if (!question) return res.status(404).json({ message: 'Question not found' });
+  const submissionResult = await query(
+    'SELECT score FROM submissions WHERE user_id=$1 AND question_id=$2 ORDER BY created_at DESC LIMIT 1',
+    [req.user!.id, questionId]
+  );
+  const latest = submissionResult.rows[0];
+  if (!latest) return res.status(403).json({ message: 'Submit your answer first, then help will unlock.' });
+  if (Number(latest.score) === 100) return res.status(403).json({ message: 'You already solved this question correctly.' });
+  const help = getQuestionHelp(question.title);
+  res.json({ ...help, solutionCode: question.solution_code || help.solutionCode });
+}));
+
 app.get('/api/analytics', requireAuth, asyncRoute(async (req, res) => {
   if (await preferMemory()) {
     const own = memorySubmissions.filter((submission) => submission.user_id === req.user!.id);
@@ -2237,6 +2491,10 @@ app.get('/api/admin/export', requireAuth, requireAdmin, asyncRoute(async (_req, 
           email: user.email,
           college: user.college,
           role: user.role,
+          authProvider: user.auth_provider,
+          emailVerified: user.email_verified,
+          lastLogin: user.last_login_at || null,
+          accountStatus: user.account_status,
           attempts: own.length,
           solved,
           attemptedQuestions,
@@ -2254,6 +2512,10 @@ app.get('/api/admin/export', requireAuth, requireAdmin, asyncRoute(async (_req, 
             u.email,
             u.college,
             u.role,
+            u.auth_provider AS "authProvider",
+            u.email_verified AS "emailVerified",
+            u.last_login_at AS "lastLogin",
+            u.account_status AS "accountStatus",
             count(s.id)::int attempts,
             count(DISTINCT s.question_id)::int "attemptedQuestions",
             count(DISTINCT CASE WHEN s.score = 100 THEN s.question_id END)::int solved,
