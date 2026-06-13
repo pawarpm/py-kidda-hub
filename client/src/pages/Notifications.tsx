@@ -51,6 +51,11 @@ export default function Notifications() {
     load();
   }
 
+  async function markAllRead() {
+    await api('/notifications/read-all', { method: 'POST' });
+    load();
+  }
+
   async function clearOne(id: string) {
     await api(`/notifications/${id}/clear`, { method: 'POST' });
     load();
@@ -62,13 +67,19 @@ export default function Notifications() {
     <div className="mx-auto max-w-4xl space-y-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-normal">Notifications</h1>
-          <p className="text-sm text-slate-500">{unreadCount} unread notification{unreadCount === 1 ? '' : 's'}</p>
+          <h1 className="text-2xl font-bold tracking-normal">Notification Inbox</h1>
+          <p className="text-sm text-slate-500">{unreadCount} unread · {items.length} stored notification{items.length === 1 ? '' : 's'}</p>
         </div>
+        {unreadCount > 0 && (
+          <button className="btn btn-primary" type="button" onClick={markAllRead}>
+            <Check size={15} />
+            Mark All Read
+          </button>
+        )}
       </div>
       {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       <div className="space-y-3">
-        {items.length === 0 && <div className="panel p-6 text-sm text-slate-500">No notifications right now.</div>}
+        {items.length === 0 && <div className="panel p-6 text-sm text-slate-500">Your notification inbox is empty.</div>}
         {items.map((item) => (
           <article key={item.id} className={`panel border-l-4 p-5 ${item.isRead ? 'border-l-slate-200' : 'border-l-brand bg-blue-50/30'}`}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
