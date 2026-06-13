@@ -17,33 +17,73 @@ export default function CodingRoom() {
   const [dark, setDark] = useState(true);
   const [hasActiveMock, setHasActiveMock] = useState(false);
   const [submitMood, setSubmitMood] = useState<SubmitMood>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
   const extensions = useMemo(() => [python()], []);
+  const draftKey = id ? `questionDraft:${id}` : '';
 
   useEffect(() => {
     setHasActiveMock(Boolean(localStorage.getItem('activeMockAttempt')));
     api<any>(`/questions/${id}`).then((q) => {
       setQuestion(q);
-      setCode(q.starter_code);
+      setCode(localStorage.getItem(`questionDraft:${id}`) || q.starter_code);
       setInput(q.sample_input);
-    });
+      setOutput('');
+      setResults([]);
+      setError('');
+    }).catch((err) => setError(err instanceof Error ? err.message : 'Could not load question'));
   }, [id]);
 
+  useEffect(() => {
+    if (!draftKey || !code || !question) return;
+    localStorage.setItem(draftKey, code);
+  }, [code, draftKey, question]);
+
   async function run() {
+    if (isRunning || isSubmitting) return;
+    setError('');
+    setIsRunning(true);
     setOutput('Running...');
-    const result = await api<any>('/run', { method: 'POST', body: JSON.stringify({ sourceCode: code, input }) });
-    setOutput(result.stderr || result.stdout || '(no output)');
+    try {
+      const result = await api<any>('/run', { method: 'POST', body: JSON.stringify({ sourceCode: code, input }) });
+      setOutput(result.stderr || result.stdout || '(no output)');
+    } catch (err) {
+      setOutput('');
+      setError(err instanceof Error ? err.message : 'Could not run code');
+    } finally {
+      setIsRunning(false);
+    }
   }
 
   async function submit() {
+    if (isSubmitting || isRunning) return;
+    setError('');
     setResults([]);
-    const result = await api<any>('/submit', { method: 'POST', body: JSON.stringify({ questionId: id, sourceCode: code }) });
-    setOutput(`${result.status.toUpperCase()} · Score ${result.score}%`);
-    setResults(result.results);
-    setSubmitMood(result.score === 100 ? 'success' : 'retry');
-    window.setTimeout(() => setSubmitMood(null), 1500);
+    setIsSubmitting(true);
+    try {
+      const result = await api<any>('/submit', { method: 'POST', body: JSON.stringify({ questionId: id, sourceCode: code }) });
+      setOutput(`${result.status.toUpperCase()} · Score ${result.score}%`);
+      setResults(result.results);
+      setSubmitMood(result.score === 100 ? 'success' : 'retry');
+      window.setTimeout(() => setSubmitMood(null), 1500);
+    } catch (err) {
+      setOutput('');
+      setError(err instanceof Error ? err.message : 'Could not submit answer');
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
-  if (!question) return <div className="panel p-6">Loading coding room...</div>;
+  function resetCode() {
+    setCode(question.starter_code);
+    if (draftKey) localStorage.removeItem(draftKey);
+    setResults([]);
+    setOutput('');
+    setError('');
+  }
+
+  if (!question) return <div className="panel p-6">{error || 'Loading coding room...'}</div>;
 
   return (
     <div className="relative grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
@@ -104,11 +144,12 @@ export default function CodingRoom() {
           <div className="font-bold">Python Editor</div>
           <div className="flex gap-2">
             <button className="btn btn-soft" onClick={() => setDark(!dark)}><SunMoon size={16} /></button>
-            <button className="btn btn-soft" onClick={() => setCode(question.starter_code)}><RotateCcw size={16} /> Reset</button>
-            <button className="btn btn-soft" onClick={run}><Play size={16} /> Run</button>
-            <button className="btn btn-primary" onClick={submit}><Send size={16} /> Submit</button>
+            <button className="btn btn-soft" onClick={resetCode} disabled={isRunning || isSubmitting}><RotateCcw size={16} /> Reset</button>
+            <button className="btn btn-soft" onClick={run} disabled={isRunning || isSubmitting}><Play size={16} /> {isRunning ? 'Running...' : 'Run'}</button>
+            <button className="btn btn-primary" onClick={submit} disabled={isRunning || isSubmitting}><Send size={16} /> {isSubmitting ? 'Submitting...' : 'Submit'}</button>
           </div>
         </div>
+        {error && <div className="border-b border-red-100 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700">{error}</div>}
         <CodeMirror value={code} height="430px" theme={dark ? 'dark' : 'light'} extensions={extensions} onChange={setCode} basicSetup={{ lineNumbers: true, indentOnInput: true, foldGutter: true }} />
         <div className="grid gap-3 border-t border-slate-200 p-4 lg:grid-cols-2">
           <label className="block">

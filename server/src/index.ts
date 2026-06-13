@@ -1417,12 +1417,13 @@ app.post('/api/mock-tests/:id/start', requireAuth, asyncRoute(async (req, res) =
     'INSERT INTO mock_attempts (user_id, mock_test_id) VALUES ($1,$2) RETURNING id, started_at',
     [req.user!.id, test.id]
   );
+  const attemptId = attemptResult.rows[0].id;
   for (const [index, question] of questions.rows.entries()) {
-    await query('INSERT INTO mock_test_questions (mock_test_id, question_id, sort_order) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [test.id, question.id, index + 1]);
+    await query('INSERT INTO mock_attempt_questions (attempt_id, question_id, sort_order) VALUES ($1,$2,$3)', [attemptId, question.id, index + 1]);
   }
   const startedAt = attemptResult.rows[0].started_at;
   const endsAt = new Date(new Date(startedAt).getTime() + test.duration_minutes * 60 * 1000);
-  res.status(201).json({ attemptId: attemptResult.rows[0].id, test, questions: questions.rows, startedAt, endsAt });
+  res.status(201).json({ attemptId, test, questions: questions.rows, startedAt, endsAt });
 }));
 
 app.post('/api/mock-attempts/:id/submit', requireAuth, asyncRoute(async (req, res) => {
@@ -1456,13 +1457,13 @@ app.post('/api/mock-attempts/:id/submit', requireAuth, asyncRoute(async (req, re
   if (!attempt) return res.status(404).json({ message: 'Mock attempt not found' });
   const results = await query(
     `SELECT q.id AS "questionId", q.title, coalesce(max(s.score),0)::int AS score, count(s.id)::int > 0 AS attempted
-     FROM mock_test_questions mtq
-     JOIN questions q ON q.id=mtq.question_id
+     FROM mock_attempt_questions maq
+     JOIN questions q ON q.id=maq.question_id
      LEFT JOIN submissions s ON s.question_id=q.id AND s.user_id=$1 AND s.created_at >= $2
-     WHERE mtq.mock_test_id=$3
-     GROUP BY q.id, q.title, mtq.sort_order
-     ORDER BY mtq.sort_order`,
-    [req.user!.id, attempt.started_at, attempt.mock_test_id]
+     WHERE maq.attempt_id=$3
+     GROUP BY q.id, q.title, maq.sort_order
+     ORDER BY maq.sort_order`,
+    [req.user!.id, attempt.started_at, attempt.id]
   );
   const totalScore = results.rows.reduce((sum: number, item: any) => sum + Number(item.score), 0);
   const score = results.rows.length ? Math.round(totalScore / results.rows.length) : 0;

@@ -25,7 +25,7 @@ export default function QuestionBank() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Question Bank</h1>
-          <p className="text-sm text-slate-500">500+ Python questions with topic filters and difficulty levels.</p>
+          <p className="text-sm text-slate-500">Syllabus-based Python questions from your engineering assignment PDF.</p>
         </div>
         <button className="btn btn-primary" onClick={random}><Shuffle size={16} /> Random</button>
       </div>

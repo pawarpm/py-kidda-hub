@@ -103,6 +103,13 @@ CREATE TABLE IF NOT EXISTS mock_attempts (
   status TEXT NOT NULL CHECK (status IN ('in_progress', 'submitted', 'auto_submitted')) DEFAULT 'in_progress'
 );
 
+CREATE TABLE IF NOT EXISTS mock_attempt_questions (
+  attempt_id UUID NOT NULL REFERENCES mock_attempts(id) ON DELETE CASCADE,
+  question_id UUID NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL,
+  PRIMARY KEY (attempt_id, question_id)
+);
+
 CREATE TABLE IF NOT EXISTS certificates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -203,6 +210,7 @@ CREATE TABLE IF NOT EXISTS notification_user_status (
 CREATE INDEX IF NOT EXISTS idx_questions_topic ON questions(topic);
 CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty);
 CREATE INDEX IF NOT EXISTS idx_submissions_user_created ON submissions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mock_attempt_questions_attempt ON mock_attempt_questions(attempt_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_friends_user ON friends(user_id);
 CREATE INDEX IF NOT EXISTS idx_private_messages_chat ON private_messages(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, created_at);

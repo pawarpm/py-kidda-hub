@@ -19,7 +19,7 @@ async function main() {
   );
 
   const existing = await query<{ count: string }>('SELECT count(*) FROM questions');
-  if (Number(existing.rows[0].count) < 500) {
+  if (Number(existing.rows[0].count) !== buildQuestionSeed().length) {
     await query('TRUNCATE questions CASCADE');
     for (const item of buildQuestionSeed()) {
       const inserted = await query<{ id: string }>(
@@ -49,7 +49,7 @@ async function main() {
   for (const [title, minutes] of mockTitles) {
     await query('INSERT INTO mock_tests (title, duration_minutes) VALUES ($1,$2) ON CONFLICT DO NOTHING', [title, minutes]);
   }
-  console.log('Seed complete: 520 questions, demo users, and mock tests are ready.');
+  console.log(`Seed complete: ${buildQuestionSeed().length} syllabus questions, demo users, and mock tests are ready.`);
 }
 
 main()

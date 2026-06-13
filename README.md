@@ -6,7 +6,7 @@ A full-stack coding practice and mock test platform for second-year Indian engin
 
 - JWT authentication with student/admin roles
 - Coding editor with Python execution, output, errors, and test case results
-- 500+ seeded Python questions across Basic, Intermediate, and Advanced topics
+- Syllabus-based Python questions across Basic, Intermediate, and Advanced topics
 - Mock tests for 30, 60, 90 minutes and full semester practice
 - Student analytics, progress tracking, streaks, weak/strong topics
 - College/global/weekly/monthly leaderboards
