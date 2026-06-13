@@ -382,7 +382,7 @@ export default function AppShell() {
             <button
               className="btn btn-soft"
               type="button"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onClick={toggleTheme}
               aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
             >
