@@ -36,6 +36,7 @@ export default function Auth() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [snakeBiting, setSnakeBiting] = useState(false);
+  const [showEntryVideo, setShowEntryVideo] = useState(false);
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -43,7 +44,8 @@ export default function Auth() {
     saveSession(token, user);
     setMessage('Login successful. Opening dashboard...');
     setSnakeBiting(true);
-    window.setTimeout(() => navigate('/'), window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 150 : 850);
+    setShowEntryVideo(true);
+    window.setTimeout(() => navigate('/'), window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 250 : 2000);
   }
 
   useEffect(() => {
@@ -190,6 +192,15 @@ export default function Auth() {
 
   return (
     <div className="auth-snake-page min-h-screen overflow-hidden text-white">
+      {showEntryVideo && (
+        <div className="login-entry-video" aria-label="Opening Py Kidda Hub dashboard">
+          <video src="/login-entry.mp4" autoPlay muted playsInline preload="auto" />
+          <div className="login-entry-glass">
+            <div className="text-sm font-bold text-cyan-100">Opening PY Kidda Hub</div>
+            <div className="mt-1 text-xs text-slate-300">Preparing your dashboard...</div>
+          </div>
+        </div>
+      )}
       <section className="mx-auto grid min-h-screen w-full max-w-7xl gap-6 px-4 py-5 lg:grid-cols-[1.05fr_0.95fr] lg:px-8 lg:py-8">
         <div className="relative flex min-h-[360px] flex-col justify-between overflow-hidden rounded-2xl border border-cyan-300/20 bg-slate-950/70 p-6 shadow-[0_24px_80px_rgba(15,23,42,.45)] lg:p-8">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_82%_28%,rgba(168,85,247,.18),transparent_30%)]" />
