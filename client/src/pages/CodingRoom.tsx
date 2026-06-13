@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
-import { ArrowLeft, PartyPopper, Play, RotateCcw, Send, Sparkles, SunMoon } from 'lucide-react';
+import { ArrowLeft, Lightbulb, PartyPopper, Play, RotateCcw, Send, Sparkles, SunMoon, Wand2 } from 'lucide-react';
 import { api } from '../lib/api';
 
 type SubmitMood = 'success' | 'retry' | null;
@@ -20,6 +20,10 @@ export default function CodingRoom() {
   const [isRunning, setIsRunning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [lastScore, setLastScore] = useState<number | null>(null);
+  const [help, setHelp] = useState<{ solutionCode: string; explanation: string } | null>(null);
+  const [helpLoading, setHelpLoading] = useState(false);
+  const [helpError, setHelpError] = useState('');
   const extensions = useMemo(() => [python()], []);
   const draftKey = id ? `questionDraft:${id}` : '';
 
@@ -32,6 +36,9 @@ export default function CodingRoom() {
       setOutput('');
       setResults([]);
       setError('');
+      setLastScore(null);
+      setHelp(null);
+      setHelpError('');
     }).catch((err) => setError(err instanceof Error ? err.message : 'Could not load question'));
   }, [id]);
 
@@ -65,6 +72,9 @@ export default function CodingRoom() {
       const result = await api<any>('/submit', { method: 'POST', body: JSON.stringify({ questionId: id, sourceCode: code }) });
       setOutput(`${result.status.toUpperCase()} · Score ${result.score}%`);
       setResults(result.results);
+      setLastScore(result.score);
+      setHelp(null);
+      setHelpError('');
       setSubmitMood(result.score === 100 ? 'success' : 'retry');
       window.setTimeout(() => setSubmitMood(null), 1500);
     } catch (err) {
@@ -81,6 +91,31 @@ export default function CodingRoom() {
     setResults([]);
     setOutput('');
     setError('');
+    setLastScore(null);
+    setHelp(null);
+    setHelpError('');
+  }
+
+  async function getHelp() {
+    if (helpLoading) return;
+    setHelpLoading(true);
+    setHelpError('');
+    try {
+      const result = await api<{ solutionCode: string; explanation: string }>(`/questions/${id}/help`);
+      setHelp(result);
+    } catch (err) {
+      setHelpError(err instanceof Error ? err.message : 'Could not load help.');
+    } finally {
+      setHelpLoading(false);
+    }
+  }
+
+  function fixThis() {
+    if (!help?.solutionCode) return;
+    setCode(help.solutionCode);
+    setInput(question.sample_input);
+    setOutput('Correct reference code filled in the editor. Click Run or Submit to verify it.');
+    if (draftKey) localStorage.setItem(draftKey, help.solutionCode);
   }
 
   if (!question) return <div className="panel p-6">{error || 'Loading coding room...'}</div>;
@@ -163,7 +198,15 @@ export default function CodingRoom() {
         </div>
         {results.length > 0 && (
           <div className="border-t border-slate-200 p-4">
-            <div className="mb-2 text-sm font-bold">Test Case Results</div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-bold">Test Case Results</div>
+              {lastScore !== null && lastScore < 100 && (
+                <button className="btn btn-soft" type="button" onClick={getHelp} disabled={helpLoading}>
+                  <Lightbulb size={16} />
+                  {helpLoading ? 'Loading Help...' : 'Get Help'}
+                </button>
+              )}
+            </div>
             <div className="grid gap-2">
               {results.map((r, i) => (
                 <div key={i} className={`rounded-md px-3 py-2 text-sm ${r.passed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
@@ -171,6 +214,27 @@ export default function CodingRoom() {
                 </div>
               ))}
             </div>
+            {helpError && <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{helpError}</div>}
+            {help && (
+              <div className="mt-4 overflow-hidden rounded-lg border border-blue-100 bg-blue-50">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 px-4 py-3">
+                  <div>
+                    <div className="font-bold text-slate-900">Correct Explanation</div>
+                    <div className="text-sm text-slate-600">Study the idea, then use Fix This only when you are ready to compare.</div>
+                  </div>
+                  <button className="btn btn-primary" type="button" onClick={fixThis}>
+                    <Wand2 size={16} />
+                    Fix This
+                  </button>
+                </div>
+                <div className="grid gap-3 p-4">
+                  <div className="rounded-md bg-white p-3 text-sm leading-6 text-slate-700">
+                    {help.explanation}
+                  </div>
+                  <pre className="max-h-96 overflow-auto rounded-md bg-slate-950 p-4 text-sm text-slate-50">{help.solutionCode}</pre>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>
