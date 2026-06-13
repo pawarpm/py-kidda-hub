@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url TEXT,
   college TEXT NOT NULL DEFAULT 'Demo Engineering College',
   role TEXT NOT NULL CHECK (role IN ('student', 'admin')) DEFAULT 'student',
+  email_verified BOOLEAN NOT NULL DEFAULT false,
+  last_login_at TIMESTAMPTZ,
+  account_status TEXT NOT NULL CHECK (account_status IN ('active', 'suspended', 'banned')) DEFAULT 'active',
   status TEXT NOT NULL CHECK (status IN ('online', 'idle', 'offline')) DEFAULT 'offline',
   streak_count INTEGER NOT NULL DEFAULT 0,
   last_active_at TIMESTAMPTZ,
@@ -20,7 +23,23 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT '
 ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT UNIQUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'offline';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status TEXT NOT NULL DEFAULT 'active';
 ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+
+CREATE TABLE IF NOT EXISTS auth_otps (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK (purpose IN ('email_verification', 'password_reset')),
+  code_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS student_profiles (
   user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -103,11 +122,30 @@ CREATE TABLE IF NOT EXISTS mock_attempts (
   status TEXT NOT NULL CHECK (status IN ('in_progress', 'submitted', 'auto_submitted')) DEFAULT 'in_progress'
 );
 
+ALTER TABLE mock_attempts ADD COLUMN IF NOT EXISTS violation_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE mock_attempts ADD COLUMN IF NOT EXISTS cheating_suspected BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE mock_attempts ADD COLUMN IF NOT EXISTS cheating_reason TEXT;
+ALTER TABLE mock_attempts ADD COLUMN IF NOT EXISTS device_info JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE mock_attempts ADD COLUMN IF NOT EXISTS webcam_status TEXT NOT NULL DEFAULT 'not_required';
+ALTER TABLE mock_attempts ADD COLUMN IF NOT EXISTS reviewed_by_admin UUID REFERENCES users(id);
+ALTER TABLE mock_attempts ADD COLUMN IF NOT EXISTS admin_remarks TEXT;
+
 CREATE TABLE IF NOT EXISTS mock_attempt_questions (
   attempt_id UUID NOT NULL REFERENCES mock_attempts(id) ON DELETE CASCADE,
   question_id UUID NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
   sort_order INTEGER NOT NULL,
   PRIMARY KEY (attempt_id, question_id)
+);
+
+CREATE TABLE IF NOT EXISTS mock_proctoring_violations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  attempt_id UUID NOT NULL REFERENCES mock_attempts(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  violation_type TEXT NOT NULL,
+  violation_message TEXT NOT NULL,
+  device_info JSONB NOT NULL DEFAULT '{}'::jsonb,
+  webcam_status TEXT NOT NULL DEFAULT 'not_required',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS certificates (
