@@ -50,6 +50,7 @@ export default function ProfileForm() {
   const previewUrl = useMemo(() => picture?.dataUrl || form.profilePictureUrl || user?.avatar_url || '', [form.profilePictureUrl, picture, user?.avatar_url]);
 
   useEffect(() => {
+    if (!isEdit && user?.id) localStorage.setItem(`pkh-profile-create-shown:${user.id}`, 'true');
     let active = true;
     api<{ exists: boolean; profile: StudentProfile | null }>('/student-profile')
       .then((result) => {
@@ -61,7 +62,7 @@ export default function ProfileForm() {
     return () => {
       active = false;
     };
-  }, [user?.name]);
+  }, [isEdit, user?.id, user?.name]);
 
   async function choosePicture(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -218,11 +219,9 @@ export default function ProfileForm() {
           {error && <div className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
           <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-            {isEdit && (
-              <button className="btn btn-soft" type="button" onClick={() => navigate('/')}>
-                Cancel
-              </button>
-            )}
+            <button className="btn btn-soft" type="button" onClick={() => navigate('/')}>
+              {isEdit ? 'Cancel' : 'Skip for Now'}
+            </button>
             <button className="btn btn-primary" type="submit" disabled={saving}>
               {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
               {saving ? 'Saving Profile' : isEdit ? 'Save Changes' : 'Create Profile'}
