@@ -57,11 +57,12 @@ export default function MockTests() {
   const [pendingTest, setPendingTest] = useState<MockTest | null>(null);
   const [declarationAccepted, setDeclarationAccepted] = useState(false);
   const [webcamEnabled, setWebcamEnabled] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const submittedRef = useRef(false);
   const activeWithWebcam = active ? { ...active, webcamEnabled: Boolean(active.webcamEnabled) } : null;
   const proctoring = useProctoring({
     attempt: activeWithWebcam,
-    enabled: Boolean(active && !result),
+    enabled: Boolean(active && !result && !submitting),
     onAutoSubmit: async (reason) => {
       await submitAttempt(true, reason);
     }
@@ -140,6 +141,7 @@ export default function MockTests() {
     if (!active) return;
     setError('');
     submittedRef.current = true;
+    setSubmitting(true);
     try {
       const response = await api<MockResult>(`/mock-attempts/${active.attemptId}/submit`, {
         method: 'POST',
@@ -157,6 +159,8 @@ export default function MockTests() {
     } catch (err) {
       submittedRef.current = false;
       setError(err instanceof Error ? err.message : 'Could not submit mock test');
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -199,9 +203,9 @@ export default function MockTests() {
                 <Clock size={18} />
                 {formatTime(timer)}
               </div>
-              <button className="btn btn-primary" onClick={() => submitAttempt(false)}>
+              <button className="btn btn-primary" onClick={() => submitAttempt(false)} disabled={submitting}>
                 <Send size={16} />
-                Submit Test
+                {submitting ? 'Submitting...' : 'Submit Test'}
               </button>
             </div>
           </div>
